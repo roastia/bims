@@ -383,6 +383,12 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
   color: var(--primary-dark);
 }
 
+.stock-move-form {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
 </style>
 </head>
 <body>
@@ -394,7 +400,6 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
     <a href="#/dashboard" data-route="/dashboard">ダッシュボード</a>
     <a href="#/stock" data-route="/stock">在庫一覧</a>
     <a href="#/receive" data-route="/receive">入荷登録</a>
-    <a href="#/transfer" data-route="/transfer">在庫移動</a>
     <a href="#/import" data-route="/import">CSV取込</a>
     <a href="#/sales" data-route="/sales">売上履歴</a>
     <a href="#/returns" data-route="/returns">返品管理</a>
@@ -411,7 +416,6 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
 <div id="toast-container" class="toast-container"></div>
 
 <script>
-// ---- 01_db.js ----
 // ============================================================
 // ローカルデータベース(IndexedDB)
 // アプリ全体の状態を1つのJSONドキュメントとしてIndexedDBに保存する。
@@ -483,8 +487,6 @@ function defaultState() {
   };
 }
 
-
-// ---- 02_barcode.js ----
 // ============================================================
 // 書籍JANコード(2段バーコード)の解析
 // 上段: ISBNをEAN-13化したコード(978/979から始まる13桁)
@@ -556,8 +558,6 @@ const Barcode = {
   },
 };
 
-
-// ---- 03_openbd.js ----
 // ============================================================
 // openBD (https://openbd.jp) からの書誌情報自動取得(任意・要インターネット接続)
 // 通信できない場合は null を返し、手入力にフォールバックする。
@@ -604,8 +604,6 @@ const OpenBd = {
   },
 };
 
-
-// ---- 04_csv.js ----
 // ============================================================
 // CSV読み込み/書き出しユーティリティ(外部ライブラリ不使用)
 // ============================================================
@@ -677,8 +675,6 @@ const Csv = {
   },
 };
 
-
-// ---- 05_crud.js ----
 // ============================================================
 // ビジネスロジック(旧サーバー版 crud.py のJS移植)
 // すべて state(IndexedDBにも保存されるJSオブジェクト)を直接操作する。
@@ -1221,8 +1217,6 @@ function todayStrFromDate(d) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-
-// ---- 06_localapi.js ----
 // ============================================================
 // LocalApi: 旧サーバー版のREST APIをこのブラウザ内だけで再現するルーター。
 // 画面側(pages/*.js)は以前とまったく同じ Api.get/post/put/del/uploadFile
@@ -1735,8 +1729,6 @@ const LocalApi = {
   },
 };
 
-
-// ---- 07_api.js ----
 // ============================================================
 // Api: 画面側から見たインターフェースは以前のサーバー版と同じ。
 // 内部ではネットワーク通信の代わりに LocalApi(このブラウザ内のデータ)を呼び出す。
@@ -1760,8 +1752,6 @@ const Api = {
   },
 };
 
-
-// ---- 08_util.js ----
 // 共通ユーティリティ
 const Util = {
   escapeHtml(str) {
@@ -1809,8 +1799,6 @@ const Util = {
   },
 };
 
-
-// ---- 09_store.js ----
 // 店舗の状態管理
 // (画面上部の店舗切替プルダウンは廃止し、全店舗のデータを横断して表示する方針に変更。
 //  ただし入荷登録・棚卸・返品管理など「対象店舗」を選ぶ必要がある画面のために、
@@ -1854,8 +1842,6 @@ const StoreState = {
   },
 };
 
-
-// ---- 10_page_dashboard.js ----
 const PageDashboard = {
   async render(root) {
     root.innerHTML = `<p class="loading">読み込み中...</p>`;
@@ -2028,8 +2014,6 @@ const PageDashboard = {
   },
 };
 
-
-// ---- 10b_page_analytics.js ----
 // ============================================================
 // グラフ表示ページ: 在庫・売上などのデータを可視化する
 // 外部ライブラリを使わず、HTML/CSSのバーとSVGの円グラフ・折れ線グラフで表現する
@@ -2267,8 +2251,6 @@ const PageAnalytics = {
   },
 };
 
-
-// ---- 11_page_stock.js ----
 const PageStock = {
   expandedIds: {},
 
@@ -2409,6 +2391,39 @@ const PageStock = {
           };
         }
       });
+
+      const moveBtn = document.getElementById(`move-btn-${secId}`);
+      if (moveBtn) {
+        moveBtn.onclick = async (e) => {
+          e.stopPropagation();
+          const fromLoc = document.getElementById(`move-from-loc-${secId}`).value;
+          const toStoreId = parseInt(document.getElementById(`move-to-store-${secId}`).value, 10);
+          const toLoc = document.getElementById(`move-to-loc-${secId}`).value;
+          const qty = parseInt(document.getElementById(`move-qty-${secId}`).value || "0", 10);
+          const moveDate = document.getElementById(`move-date-${secId}`).value;
+          if (!qty || qty <= 0) { Util.toast("数量は1以上を入力してください", "warning"); return; }
+          if (sec.store_id === toStoreId && fromLoc === toLoc) {
+            Util.toast("移動元と移動先が同じです。別の店舗、またはエリアを変えて指定してください", "error");
+            return;
+          }
+          try {
+            const rec = await Api.post("/api/transfers", {
+              isbn: item.isbn,
+              from_store_id: sec.store_id, to_store_id: toStoreId,
+              from_location: fromLoc, to_location: toLoc,
+              quantity: qty, transfer_date: moveDate || null, note: "",
+            });
+            Util.toast(
+              `「${rec.title || rec.isbn}」を${rec.from_store_name}(${Util.locationLabel(rec.from_location)})から${rec.to_store_name}(${Util.locationLabel(rec.to_location)})へ${rec.quantity}冊移動しました`,
+              "success"
+            );
+            this.expandedIds[item.isbn] = true;
+            this.render(root, params);
+          } catch (e2) {
+            Util.toast("移動に失敗しました: " + e2.message, "error");
+          }
+        };
+      }
     });
   },
 
@@ -2450,7 +2465,8 @@ const PageStock = {
     const sections = (item.tags_by_store && item.tags_by_store.length ? item.tags_by_store : [{ store_id: null, store_name: null, tags: [] }])
       .map((sec) => {
         const secId = `${id}-${sec.store_id}`;
-        const lotRows = (lotsByStore[sec.store_id] || []).map((lot) => `
+        const secLots = lotsByStore[sec.store_id] || [];
+        const lotRows = secLots.map((lot) => `
           <tr>
             <td><span class="${Util.purchaseTypeBadgeClass(lot.purchase_type)}">${Util.purchaseTypeLabel(lot.purchase_type)}</span></td>
             <td><span class="${Util.locationBadgeClass(lot.location)}">${Util.locationLabel(lot.location)}</span></td>
@@ -2466,6 +2482,58 @@ const PageStock = {
           <span class="tag-pill">${Util.escapeHtml(t)}<button id="tagdel-${secId}-${cssId(t)}" title="削除">×</button></span>
         `).join("");
 
+        // 移動元エリアの選択肢(在庫がある保管場所のみ)
+        const floorQty = secLots.filter((l) => (l.location || "floor") === "floor" && l.status === "active").reduce((s, l) => s + l.quantity, 0);
+        const warehouseQty = secLots.filter((l) => l.location === "warehouse" && l.status === "active").reduce((s, l) => s + l.quantity, 0);
+        const fromLocOptions = [];
+        if (floorQty > 0) fromLocOptions.push({ value: "floor", label: `店内(在庫${floorQty}冊)` });
+        if (warehouseQty > 0) fromLocOptions.push({ value: "warehouse", label: `倉庫(在庫${warehouseQty}冊)` });
+
+        let moveFormHtml = '<p class="empty-msg" style="font-style:normal; margin-top:10px;">移動できる在庫がありません</p>';
+        if (fromLocOptions.length && sec.store_id !== null) {
+          const defaultFromLoc = fromLocOptions[0].value;
+          const otherStore = StoreState.stores.find((s) => s.id !== sec.store_id);
+          const defaultToStoreId = otherStore ? otherStore.id : sec.store_id;
+          const defaultToLoc = (defaultToStoreId === sec.store_id) ? (defaultFromLoc === "floor" ? "warehouse" : "floor") : "floor";
+          const maxQty = Math.max(floorQty, warehouseQty);
+
+          moveFormHtml = `
+            <div class="stock-move-form">
+              <strong style="font-size:0.85em;">在庫を移動する</strong>
+              <div class="form-inline" style="margin-top:6px; align-items:flex-end;">
+                <div class="form-row">
+                  <label>移動元エリア</label>
+                  <select id="move-from-loc-${secId}">
+                    ${fromLocOptions.map((o) => `<option value="${o.value}">${Util.escapeHtml(o.label)}</option>`).join("")}
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label>移動先店舗</label>
+                  <select id="move-to-store-${secId}">
+                    ${StoreState.stores.map((s) => `<option value="${s.id}" ${s.id === defaultToStoreId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`).join("")}
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label>移動先エリア</label>
+                  <select id="move-to-loc-${secId}">
+                    <option value="floor" ${defaultToLoc === "floor" ? "selected" : ""}>店内</option>
+                    <option value="warehouse" ${defaultToLoc === "warehouse" ? "selected" : ""}>倉庫</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label>数量</label>
+                  <input type="number" min="1" max="${maxQty}" value="1" id="move-qty-${secId}" style="width:70px;">
+                </div>
+                <div class="form-row">
+                  <label>移動日</label>
+                  <input type="date" id="move-date-${secId}" value="${Util.todayStr()}">
+                </div>
+                <button class="small" id="move-btn-${secId}">移動する</button>
+              </div>
+            </div>
+          `;
+        }
+
         return `
           <div class="stock-detail-store-section">
             <h4>${Util.escapeHtml(sec.store_name || "(店舗不明)")}</h4>
@@ -2480,6 +2548,7 @@ const PageStock = {
               <thead><tr><th>仕入形態</th><th>保管場所</th><th>卸会社</th><th>数量</th><th>入荷日</th><th>返品期限</th><th>備考</th></tr></thead>
               <tbody>${lotRows || '<tr><td colspan="7" class="empty-msg">在庫ロットがありません</td></tr>'}</tbody>
             </table>
+            ${moveFormHtml}
           </div>
         `;
       }).join("");
@@ -2499,8 +2568,6 @@ function cssId(s) {
   return String(s).replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
-
-// ---- 12_page_receive.js ----
 const PageReceive = {
   currentBook: null, // { isbn, title, author, publisher, price, c_code, classification_text }
   selectedStoreId: null,
@@ -2797,8 +2864,6 @@ const PageReceive = {
   },
 };
 
-
-// ---- 13_page_importCsv.js ----
 const PURCHASE_CSV_TEMPLATE =
   "isbn,title,author,publisher,price,wholesaler_name,purchase_type,quantity,unit_cost,received_date,consignment_deadline,location\n" +
   "'9784000000000,サンプル書名,サンプル著者,サンプル出版社,1500,日販,買切,10,1050,2026-07-01,,店内\n" +
@@ -2978,8 +3043,6 @@ const PageImport = {
   },
 };
 
-
-// ---- 14_page_sales.js ----
 const PageSales = {
   async render(root) {
     root.innerHTML = `<p class="loading">読み込み中...</p>`;
@@ -3016,8 +3079,6 @@ const PageSales = {
   },
 };
 
-
-// ---- 15_page_returns.js ----
 const PageReturns = {
   activeTab: "candidates",
   selectedStoreId: null,
@@ -3151,8 +3212,6 @@ const PageReturns = {
   },
 };
 
-
-// ---- 16_page_stocktake.js ----
 const PageStocktake = {
   selectedStoreId: null,
 
@@ -3257,8 +3316,6 @@ const PageStocktake = {
   },
 };
 
-
-// ---- 17_page_masters.js ----
 const PageMasters = {
   activeTab: "stores",
   editingStoreId: null,
@@ -3708,224 +3765,6 @@ const PageMasters = {
   },
 };
 
-
-// ---- 18b_page_transfer.js ----
-const PageTransfer = {
-  fromStoreId: null,
-  toStoreId: null,
-  fromLocation: "floor",
-  toLocation: "warehouse",
-  selectedBook: null, // { isbn, title, availableQty }
-
-  async render(root) {
-    const currentStoreId = StoreState.currentStoreId;
-    if (!this.fromStoreId) this.fromStoreId = currentStoreId;
-    const stores = StoreState.stores;
-    if (this.toStoreId === null) {
-      const other = stores.find((s) => s.id !== this.fromStoreId);
-      this.toStoreId = other ? other.id : this.fromStoreId;
-    }
-    if (this.fromStoreId === this.toStoreId && this.fromLocation === this.toLocation) {
-      this.toLocation = this.fromLocation === "floor" ? "warehouse" : "floor";
-    }
-    this.selectedBook = null;
-
-    root.innerHTML = `
-      <h1>店舗間移動・エリア移動</h1>
-      <p class="subtitle">在庫を、卸会社・仕入形態・返品期限などの情報を保ったまま、別の店舗、または同じ店舗内の店内⇔倉庫へ移動します。</p>
-
-      <div class="card">
-        <h2 style="margin-top:0;">移動する</h2>
-        <div class="grid-2">
-          <div class="form-row">
-            <label>移動元店舗</label>
-            <select id="tr-from-store">
-              ${stores.map((s) => `<option value="${s.id}" ${s.id === this.fromStoreId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`).join("")}
-            </select>
-          </div>
-          <div class="form-row">
-            <label>移動元エリア</label>
-            <select id="tr-from-location">
-              <option value="floor" ${this.fromLocation !== "warehouse" ? "selected" : ""}>店内</option>
-              <option value="warehouse" ${this.fromLocation === "warehouse" ? "selected" : ""}>倉庫</option>
-            </select>
-          </div>
-          <div class="form-row">
-            <label>移動先店舗</label>
-            <select id="tr-to-store">
-              ${stores.map((s) => `<option value="${s.id}" ${s.id === this.toStoreId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`).join("")}
-            </select>
-          </div>
-          <div class="form-row">
-            <label>移動先エリア</label>
-            <select id="tr-to-location">
-              <option value="floor" ${this.toLocation !== "warehouse" ? "selected" : ""}>店内</option>
-              <option value="warehouse" ${this.toLocation === "warehouse" ? "selected" : ""}>倉庫</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="form-row">
-          <label>移動する書籍を検索(移動元店舗・エリアの在庫から選択)</label>
-          <input type="text" id="tr-search-input" placeholder="書名・著者・出版社・ISBN">
-        </div>
-        <div id="tr-search-result"></div>
-
-        <div id="tr-selected-book-area" style="display:none; margin-top:14px;">
-          <div class="grid-2">
-            <div class="form-row"><label>選択中の書籍</label><input type="text" id="tr-selected-title" readonly></div>
-            <div class="form-row"><label>移動元の在庫数</label><input type="text" id="tr-available-qty" readonly></div>
-            <div class="form-row"><label>移動数量</label><input type="number" id="tr-quantity" value="1" min="1"></div>
-            <div class="form-row"><label>移動日</label><input type="date" id="tr-date" value="${Util.todayStr()}"></div>
-          </div>
-          <div class="form-row"><label>備考(任意)</label><input type="text" id="tr-note"></div>
-          <button id="tr-submit-btn">この内容で移動する</button>
-          <button class="secondary" id="tr-cancel-btn">選択解除</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2 style="margin-top:0;">移動履歴(${Util.escapeHtml(StoreState.getCurrentStore().name)} が関わるもの)</h2>
-        <div id="tr-history"><p class="loading">読み込み中...</p></div>
-      </div>
-    `;
-
-    document.getElementById("tr-from-store").addEventListener("change", (e) => {
-      this.fromStoreId = parseInt(e.target.value, 10);
-      this.render(root);
-    });
-    document.getElementById("tr-to-store").addEventListener("change", (e) => {
-      this.toStoreId = parseInt(e.target.value, 10);
-      this.render(root);
-    });
-    document.getElementById("tr-from-location").addEventListener("change", (e) => {
-      this.fromLocation = e.target.value;
-      this.render(root);
-    });
-    document.getElementById("tr-to-location").addEventListener("change", (e) => {
-      this.toLocation = e.target.value;
-      this.render(root);
-    });
-
-    const doSearch = async () => {
-      const q = document.getElementById("tr-search-input").value;
-      const items = await Api.get(`/api/stores/${this.fromStoreId}/stock?q=${encodeURIComponent(q)}`);
-      const qtyKey = this.fromLocation === "warehouse" ? "warehouse_quantity" : "floor_quantity";
-      const available = items.filter((it) => it[qtyKey] > 0);
-      document.getElementById("tr-search-result").innerHTML = `
-        <table style="margin-top:8px;">
-          <thead><tr><th>書名</th><th>著者</th><th>在庫数(${this.fromLocation === "warehouse" ? "倉庫" : "店内"})</th><th></th></tr></thead>
-          <tbody>${available.length ? available.map((it) => `
-            <tr>
-              <td>${Util.escapeHtml(it.title || it.isbn)}</td>
-              <td>${Util.escapeHtml(it.author || "")}</td>
-              <td>${it[qtyKey]}</td>
-              <td><button class="small" id="tr-pick-${cssId(it.isbn)}">選択</button></td>
-            </tr>
-          `).join("") : '<tr><td colspan="4" class="empty-msg">移動元店舗・エリアにはこの条件に合う在庫がありません</td></tr>'}</tbody>
-        </table>
-      `;
-      available.forEach((it) => {
-        const btn = document.getElementById(`tr-pick-${cssId(it.isbn)}`);
-        if (btn) {
-          btn.onclick = () => {
-            this.selectedBook = { isbn: it.isbn, title: it.title, availableQty: it[qtyKey] };
-            this.showSelectedBook();
-          };
-        }
-      });
-    };
-    document.getElementById("tr-search-input").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") doSearch();
-    });
-    document.getElementById("tr-search-input").addEventListener("input", () => doSearch());
-    doSearch();
-
-    document.getElementById("tr-cancel-btn").onclick = () => {
-      this.selectedBook = null;
-      document.getElementById("tr-selected-book-area").style.display = "none";
-    };
-    document.getElementById("tr-submit-btn").onclick = () => this.submit();
-
-    await this.renderHistory();
-  },
-
-  showSelectedBook() {
-    const area = document.getElementById("tr-selected-book-area");
-    area.style.display = "";
-    document.getElementById("tr-selected-title").value = this.selectedBook.title || this.selectedBook.isbn;
-    document.getElementById("tr-available-qty").value = `${this.selectedBook.availableQty}冊`;
-    const qtyField = document.getElementById("tr-quantity");
-    qtyField.value = 1;
-    qtyField.max = this.selectedBook.availableQty;
-    qtyField.focus();
-  },
-
-  async renderHistory() {
-    const el = document.getElementById("tr-history");
-    try {
-      const history = await Api.get(`/api/transfers/history?store_id=${StoreState.currentStoreId}`);
-      el.innerHTML = `
-        <table>
-          <thead><tr><th>移動日</th><th>書名</th><th>移動元</th><th>移動先</th><th>数量</th><th>備考</th></tr></thead>
-          <tbody>
-            ${history.length ? history.map((h) => `
-              <tr>
-                <td>${Util.fmtDate(h.transfer_date)}</td>
-                <td>${Util.escapeHtml(h.title || h.isbn)}</td>
-                <td>${Util.escapeHtml(h.from_store_name || "-")}(${Util.locationLabel(h.from_location)})</td>
-                <td>${Util.escapeHtml(h.to_store_name || "-")}(${Util.locationLabel(h.to_location)})</td>
-                <td>${h.quantity}</td>
-                <td>${Util.escapeHtml(h.note || "")}</td>
-              </tr>
-            `).join("") : '<tr><td colspan="6" class="empty-msg">移動履歴はありません</td></tr>'}
-          </tbody>
-        </table>
-      `;
-    } catch (e) {
-      el.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
-    }
-  },
-
-  async submit() {
-    if (!this.selectedBook) {
-      Util.toast("移動する書籍を選択してください", "warning");
-      return;
-    }
-    if (this.fromStoreId === this.toStoreId && this.fromLocation === this.toLocation) {
-      Util.toast("移動元と移動先が同じです。別の店舗、またはエリアを変えて指定してください", "error");
-      return;
-    }
-    const quantity = parseInt(document.getElementById("tr-quantity").value || "0", 10);
-    if (!quantity || quantity <= 0) {
-      Util.toast("数量は1以上を入力してください", "error");
-      return;
-    }
-    try {
-      const rec = await Api.post("/api/transfers", {
-        isbn: this.selectedBook.isbn,
-        from_store_id: this.fromStoreId,
-        to_store_id: this.toStoreId,
-        from_location: this.fromLocation,
-        to_location: this.toLocation,
-        quantity,
-        transfer_date: document.getElementById("tr-date").value || null,
-        note: document.getElementById("tr-note").value,
-      });
-      Util.toast(
-        `「${rec.title || rec.isbn}」を${rec.from_store_name}(${Util.locationLabel(rec.from_location)})から${rec.to_store_name}(${Util.locationLabel(rec.to_location)})へ${rec.quantity}冊移動しました`,
-        "success"
-      );
-      this.selectedBook = null;
-      this.render(document.getElementById("app"));
-    } catch (e) {
-      Util.toast("移動に失敗しました: " + e.message, "error");
-    }
-  },
-};
-
-
-// ---- 19_router.js ----
 const Router = {
   routes: {
     "/dashboard": PageDashboard,
@@ -3936,9 +3775,9 @@ const Router = {
     "/returns": PageReturns,
     "/stocktake": PageStocktake,
     "/masters": PageMasters,
-    "/transfer": PageTransfer,
     "/analytics": PageAnalytics,
     "/data": PageDashboard, // データ管理はダッシュボードに統合(旧リンク互換のため残す)
+    "/transfer": PageStock, // 在庫移動は在庫一覧に統合(旧リンク互換のため残す)
   },
 
   parseHash() {
@@ -3987,8 +3826,6 @@ const Router = {
   },
 };
 
-
-// ---- 20_main.js ----
 (async function () {
   try {
     await ensureStateLoaded();
@@ -4004,6 +3841,7 @@ const Router = {
     Util.toast(AppState.repairNotice, "warning");
   }
 })();
+
 
 </script>
 </body>
