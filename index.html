@@ -2435,7 +2435,7 @@ const PageDashboard = {
       [data, stockItems, salesData] = await Promise.all([
         Api.get(`/api/dashboard?low_stock_threshold=${this.lowStockThreshold}&best_seller_days=${this.bestSellerDays}`),
         Api.get(`/api/stock?q=`),
-        Api.get(`/api/sales?days=30`),
+        Api.get(`/api/sales?days=${this.bestSellerDays}`),
       ]);
     } catch (e) {
       root.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
@@ -2452,9 +2452,12 @@ const PageDashboard = {
     };
 
     // ---- グラフ用データの集計(旧グラフページから統合) ----
+    // グラフの集計期間はすべて this.bestSellerDays を共有する(グラフ欄のセレクトで変更可能)。
+    // 「出版社別」「入荷形態別」「保管場所別」「卸会社別」「価格帯分布」「店舗別」は
+    // 現在庫のスナップショットではなく、この期間内に「入荷した分」だけを対象に集計する。
     const dayMap = {};
     const todayForChart = new Date();
-    for (let i = 29; i >= 0; i--) {
+    for (let i = this.bestSellerDays - 1; i >= 0; i--) {
       const d = new Date(todayForChart);
       d.setDate(d.getDate() - i);
       const key = Util.fmtDate(d.toISOString());
@@ -2471,41 +2474,53 @@ const PageDashboard = {
     }));
 
     const allLots = [];
-    stockItems.forEach((it) => it.lots.forEach((lot) => allLots.push({ ...lot, publisher: it.publisher, price: it.price, isbn: it.isbn })));
+    stockItems.forEach((it) => it.lots.forEach((lot) => allLots.push({ ...lot, publisher: it.publisher, price: lot.price, isbn: it.isbn })));
+
+    const periodSinceDate = new Date();
+    periodSinceDate.setDate(periodSinceDate.getDate() - this.bestSellerDays);
+    const periodSinceStr = todayStrFromDate(periodSinceDate);
+    // 期間内に受け入れた分だけを対象にする(入荷点数=initial_quantityで数える。
+    // quantityは以後の販売・返品・移動で減っていくため、「入荷した点数」の集計には使わない)
+    const periodLots = allLots.filter((l) => l.received_date >= periodSinceStr);
 
     const byPurchaseType = {};
-    allLots.forEach((l) => { byPurchaseType[l.purchase_type] = (byPurchaseType[l.purchase_type] || 0) + l.quantity; });
+    periodLots.forEach((l) => { byPurchaseType[l.purchase_type] = (byPurchaseType[l.purchase_type] || 0) + (l.initial_quantity || 0); });
     const purchaseTypeData = Object.keys(byPurchaseType).map((k, i) => ({
       label: Util.purchaseTypeLabel(k), value: byPurchaseType[k], color: Charts.palette[i % Charts.palette.length],
     }));
 
     const byLocation = {};
-    allLots.forEach((l) => { byLocation[l.location] = (byLocation[l.location] || 0) + l.quantity; });
+    periodLots.forEach((l) => { byLocation[l.location] = (byLocation[l.location] || 0) + (l.initial_quantity || 0); });
     const locationData = Object.keys(byLocation).map((k, i) => ({
       label: Util.locationLabel(k), value: byLocation[k], color: Charts.palette[(i + 3) % Charts.palette.length],
     }));
 
     const byWholesaler = {};
-    allLots.forEach((l) => {
+    periodLots.forEach((l) => {
       const name = l.wholesaler_name || "卸会社不明";
-      byWholesaler[name] = (byWholesaler[name] || 0) + l.quantity;
+      byWholesaler[name] = (byWholesaler[name] || 0) + (l.initial_quantity || 0);
     });
     const wholesalerData = Object.entries(byWholesaler)
       .sort((a, b) => b[1] - a[1]).slice(0, 10)
       .map(([label, value]) => ({ label, value }));
 
     const byPublisher = {};
-    stockItems.forEach((it) => {
-      const name = it.publisher || "出版社不明";
-      byPublisher[name] = (byPublisher[name] || 0) + it.total_quantity;
+    periodLots.forEach((l) => {
+      const name = l.publisher || "出版社不明";
+      byPublisher[name] = (byPublisher[name] || 0) + (l.initial_quantity || 0);
     });
     const publisherData = Object.entries(byPublisher)
       .sort((a, b) => b[1] - a[1]).slice(0, 10)
       .map(([label, value]) => ({ label, value }));
 
-    const byStoreChartData = (data.by_store || [])
-      .slice().sort((a, b) => b.total_quantity_in_stock - a.total_quantity_in_stock)
-      .map((s) => ({ label: s.store_name, value: s.total_quantity_in_stock }));
+    const byStorePeriod = {};
+    periodLots.forEach((l) => {
+      const name = l.store_name || "店舗不明";
+      byStorePeriod[name] = (byStorePeriod[name] || 0) + (l.initial_quantity || 0);
+    });
+    const byStoreChartData = Object.entries(byStorePeriod)
+      .sort((a, b) => b[1] - a[1])
+      .map(([label, value]) => ({ label, value }));
 
     const priceBuckets = [
       { label: "〜500円", min: 0, max: 500 },
@@ -2515,9 +2530,18 @@ const PageDashboard = {
       { label: "2001〜3000円", min: 2001, max: 3000 },
       { label: "3001円〜", min: 3001, max: Infinity },
     ];
+    // 価格帯分布は「期間内に入荷したタイトル(ISBN)」を重複なく数える。
+    // 同じ書籍が期間内に複数回・違う価格で入荷していた場合は、直近の入荷価格を代表値として使う。
+    const receivedPriceByIsbn = new Map();
+    periodLots.forEach((l) => {
+      const prev = receivedPriceByIsbn.get(l.isbn);
+      if (!prev || l.received_date >= prev.receivedDate) {
+        receivedPriceByIsbn.set(l.isbn, { price: l.price, receivedDate: l.received_date });
+      }
+    });
     const priceData = priceBuckets.map((b) => ({
       label: b.label,
-      value: stockItems.filter((it) => it.price && it.price >= b.min && it.price <= b.max).length,
+      value: [...receivedPriceByIsbn.values()].filter((v) => v.price && v.price >= b.min && v.price <= b.max).length,
     }));
 
     const consignmentSlice = Pagination.slice(data.consignment_alerts, this.consignmentPage);
@@ -2630,10 +2654,17 @@ const PageDashboard = {
       </div>
 
       <h2 style="margin-top:36px;">グラフで見る全店舗データ</h2>
-      <p class="subtitle">在庫・販売に関するデータをグラフで確認できます。</p>
+      <p class="subtitle">在庫・販売に関するデータをグラフで確認できます。「出版社別」「入荷形態別」「保管場所別」「卸会社別」「価格帯分布」「店舗別」は、下の期間内に入荷した分だけを集計しています。</p>
+      <div class="form-inline" style="margin-bottom:8px;">
+        <label class="stock-pagesize">集計期間
+          <select id="dash-graph-period">
+            ${this.bestSellerDaysOptions.map((n) => `<option value="${n}" ${this.bestSellerDays === n ? "selected" : ""}>直近${n}日</option>`).join("")}
+          </select>
+        </label>
+      </div>
 
       <div class="card">
-        <h2 style="margin-top:0;">販売推移(直近30日・冊数・全店舗合算)</h2>
+        <h2 style="margin-top:0;">販売推移(直近${this.bestSellerDays}日・冊数・全店舗合算)</h2>
         ${Charts.lineSvg(salesTrend)}
       </div>
 
@@ -2643,35 +2674,35 @@ const PageDashboard = {
           ${Charts.barChartHtml(bestSellerChartData, { color: "var(--accent)", unit: "冊" })}
         </div>
         <div class="card">
-          <h2 style="margin-top:0;">出版社別 在庫点数(上位10)</h2>
+          <h2 style="margin-top:0;">出版社別 入荷点数(直近${this.bestSellerDays}日・上位10)</h2>
           ${Charts.barChartHtml(publisherData, { unit: "冊" })}
         </div>
       </div>
 
       <div class="grid-2">
         <div class="card">
-          <h2 style="margin-top:0;">入荷形態別 在庫点数</h2>
+          <h2 style="margin-top:0;">入荷形態別 入荷点数(直近${this.bestSellerDays}日)</h2>
           ${Charts.donutSvg(purchaseTypeData)}
         </div>
         <div class="card">
-          <h2 style="margin-top:0;">保管場所別 在庫点数</h2>
+          <h2 style="margin-top:0;">保管場所別 入荷点数(直近${this.bestSellerDays}日)</h2>
           ${Charts.donutSvg(locationData)}
         </div>
       </div>
 
       <div class="grid-2">
         <div class="card">
-          <h2 style="margin-top:0;">卸会社別 在庫点数(上位10)</h2>
+          <h2 style="margin-top:0;">卸会社別 入荷点数(直近${this.bestSellerDays}日・上位10)</h2>
           ${Charts.barChartHtml(wholesalerData, { unit: "冊" })}
         </div>
         <div class="card">
-          <h2 style="margin-top:0;">価格帯分布(タイトル数)</h2>
+          <h2 style="margin-top:0;">価格帯分布(直近${this.bestSellerDays}日に入荷したタイトル数)</h2>
           ${Charts.barChartHtml(priceData, { color: "var(--success)", unit: "点" })}
         </div>
       </div>
 
       <div class="card">
-        <h2 style="margin-top:0;">店舗別 在庫合計冊数</h2>
+        <h2 style="margin-top:0;">店舗別 入荷合計冊数(直近${this.bestSellerDays}日)</h2>
         ${Charts.barChartHtml(byStoreChartData, { color: "var(--primary-dark)", unit: "冊" })}
       </div>
 
@@ -2749,15 +2780,18 @@ const PageDashboard = {
       });
     }
 
+    // 「売れ筋ランキング」欄と「グラフで見る全店舗データ」欄、どちらのセレクトを変更しても
+    // 同じ集計期間(this.bestSellerDays)に反映される(2箇所に同じ設定を置いて操作しやすくしている)
+    const onPeriodChange = (e) => {
+      const n = parseInt(e.target.value, 10);
+      this.bestSellerDays = this.bestSellerDaysOptions.includes(n) ? n : 30;
+      localStorage.setItem("dash_bestseller_days", String(this.bestSellerDays));
+      this.render(root);
+    };
     const bestSellerDaysSelect = document.getElementById("dash-bestseller-days");
-    if (bestSellerDaysSelect) {
-      bestSellerDaysSelect.onchange = (e) => {
-        const n = parseInt(e.target.value, 10);
-        this.bestSellerDays = this.bestSellerDaysOptions.includes(n) ? n : 30;
-        localStorage.setItem("dash_bestseller_days", String(this.bestSellerDays));
-        this.render(root);
-      };
-    }
+    if (bestSellerDaysSelect) bestSellerDaysSelect.onchange = onPeriodChange;
+    const graphPeriodSelect = document.getElementById("dash-graph-period");
+    if (graphPeriodSelect) graphPeriodSelect.onchange = onPeriodChange;
 
     document.getElementById("pw-change-btn").onclick = async () => {
       const current = document.getElementById("pw-change-current").value;
