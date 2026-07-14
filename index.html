@@ -4,8 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>書店在庫管理</title>
-<style>
-:root {
+<style>:root {
   --primary: #2c5f8a;
   --primary-dark: #1e4560;
   --accent: #d97b3f;
@@ -566,7 +565,6 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
     text-align: left;
   }
 }
-
 </style>
 </head>
 <body>
@@ -594,8 +592,7 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
 
 <div id="toast-container" class="toast-container"></div>
 
-<script>
-// ============================================================
+<script>// ============================================================
 // パスワードハッシュ用の軽量SHA-256実装(純粋JS、外部ライブラリ・Web Crypto API不要)
 // Web Crypto API(crypto.subtle)はブラウザの「secure context」判定に依存し、
 // file:// で直接HTMLファイルを開いた場合などに使えないことがあるため、
@@ -1166,6 +1163,12 @@ function todayStr() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+function nowDateTimeStr() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function daysBetween(fromStr, toStr) {
   const a = new Date(fromStr + "T00:00:00");
   const b = new Date(toStr + "T00:00:00");
@@ -1234,7 +1237,7 @@ const Crud = {
       purchaseType: req.purchaseType, quantity: req.quantity, initialQuantity: req.quantity,
       unitCost: req.unitCost || 0,
       price: req.price || 0,
-      receivedDate: req.receivedDate || todayStr(),
+      receivedDate: req.receivedDate || nowDateTimeStr(),
       consignmentDeadline: req.purchaseType === "consignment" ? (req.consignmentDeadline || null) : null,
       location: req.location === "warehouse" ? "warehouse" : "floor",
       status: "active", source: "manual", note: req.note || "",
@@ -2354,6 +2357,13 @@ const Util = {
     if (!d) return "";
     return String(d).slice(0, 10);
   },
+  fmtDateTime(d) {
+    if (!d) return "";
+    const s = String(d);
+    const datePart = s.slice(0, 10);
+    const timePart = s.length >= 16 ? s.slice(11, 16) : "";
+    return timePart ? `${datePart} ${timePart}` : datePart;
+  },
   fmtYen(n) {
     if (n === null || n === undefined) return "";
     return Number(n).toLocaleString("ja-JP") + "円";
@@ -2361,6 +2371,11 @@ const Util = {
   todayStr() {
     const d = new Date();
     return d.toISOString().slice(0, 10);
+  },
+  nowStr() {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   },
   purchaseTypeLabel(t) {
     if (t === "buy") return "買切";
@@ -3499,7 +3514,7 @@ const PageStock = {
             <td>${Util.escapeHtml(lot.wholesaler_name || "-")}</td>
             <td>${lot.quantity}</td>
             <td>${lot.price ? Util.fmtYen(lot.price) : "-"}</td>
-            <td>${Util.fmtDate(lot.received_date)}</td>
+            <td>${Util.fmtDateTime(lot.received_date)}</td>
             <td>${lot.consignment_deadline ? Util.fmtDate(lot.consignment_deadline) : "-"}</td>
             <td>${Util.escapeHtml(lot.note || "")}</td>
             <td><button class="tiny-link" id="lotedit-toggle-${lot.id}">編集</button></td>
@@ -3659,6 +3674,10 @@ const PageStock = {
   buildLotEditFormHtml(lot, wholesalers) {
     const id = lot.id;
     const isConsignment = lot.purchase_type === "consignment";
+    // datetime-local入力は"YYYY-MM-DDTHH:MM"形式が必要。旧データは日付のみ(YYYY-MM-DD)
+    // のため、時刻部分がなければ00:00を補って表示する(後方互換)。
+    const rd = lot.received_date || "";
+    const receivedDateTimeValue = rd ? (rd.length > 10 ? rd.slice(0, 16) : `${rd}T00:00`) : "";
     return `
       <div class="stock-move-form" style="margin-top:0; padding-top:0; border-top:none;">
       <div class="form-inline detail-move-fields">
@@ -3685,8 +3704,8 @@ const PageStock = {
           <input type="number" id="lotedit-unitcost-${id}" value="${lot.unit_cost || 0}" style="width:100px;">
         </div>
         <div class="form-row">
-          <label>入荷日</label>
-          <input type="date" id="lotedit-receiveddate-${id}" value="${lot.received_date || ""}">
+          <label>入荷日時</label>
+          <input type="datetime-local" id="lotedit-receiveddate-${id}" value="${receivedDateTimeValue}">
         </div>
         <div class="form-row" id="lotedit-deadline-row-${id}" style="${isConsignment ? "" : "display:none;"}">
           <label>返品期限</label>
@@ -3779,7 +3798,7 @@ const PageReceive = {
       this.selectedStoreId = StoreState.currentStoreId;
     }
     const storeId = this.selectedStoreId;
-    if (!this.batchSettings.receivedDate) this.batchSettings.receivedDate = Util.todayStr();
+    if (!this.batchSettings.receivedDate) this.batchSettings.receivedDate = Util.nowStr();
     let wholesalers = [];
     try {
       wholesalers = await Api.get("/api/wholesalers");
@@ -3821,7 +3840,7 @@ const PageReceive = {
           </div>
           <div class="form-row">
             <label>入荷日<span class="field-required-badge">必須</span></label>
-            <input type="date" id="batch-received-date" value="${this.batchSettings.receivedDate}">
+            <input type="datetime-local" id="batch-received-date" value="${this.batchSettings.receivedDate}">
           </div>
           <div class="form-row">
             <label>保管場所<span class="field-required-badge">必須</span></label>
@@ -5039,7 +5058,6 @@ const Router = {
     }
   });
 })();
-
 </script>
 </body>
 </html>
