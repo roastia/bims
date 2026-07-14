@@ -413,8 +413,8 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
 }
 
 .stock-detail-store-section {
-  margin-bottom: 18px;
-  padding-bottom: 14px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
   border-bottom: 1px dashed var(--border);
 }
 .stock-detail-store-section:last-child {
@@ -428,10 +428,60 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
   color: var(--primary-dark);
 }
 
+.detail-section-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.detail-store-name {
+  font-size: 0.95em;
+  color: var(--primary-dark);
+  white-space: nowrap;
+}
+.detail-tags {
+  flex: 1;
+  min-width: 0;
+}
+.tiny-link {
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-size: 0.8em;
+  padding: 2px 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tiny-link:hover {
+  text-decoration: underline;
+}
+.detail-tag-add-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.detail-lot-table th,
+.detail-lot-table td {
+  padding: 5px 8px;
+  font-size: 0.9em;
+}
+.detail-move-toggle {
+  margin-top: 4px;
+  display: inline-block;
+}
+
 .stock-move-form {
-  margin-top: 12px;
-  padding-top: 10px;
+  margin-top: 6px;
+  padding-top: 8px;
   border-top: 1px solid var(--border);
+}
+.detail-move-fields {
+  align-items: flex-end;
+  gap: 8px 12px;
+}
+.detail-move-fields .form-row {
+  margin-bottom: 0;
 }
 
 </style>
@@ -1374,7 +1424,8 @@ const Crud = {
         id: state.nextId.stockLot++,
         storeId: req.toStoreId, isbn: req.isbn, wholesalerId: lot.wholesalerId,
         purchaseType: lot.purchaseType, quantity: take, initialQuantity: take,
-        unitCost: lot.unitCost, receivedDate: lot.receivedDate, consignmentDeadline: lot.consignmentDeadline,
+        // 移動先での「入荷日」は元ロットの仕入日ではなく、実際に移動した日(transferDate)を使う
+        unitCost: lot.unitCost, receivedDate: transferDate, consignmentDeadline: lot.consignmentDeadline,
         location: toLocation,
         status: "active", source: "transfer",
         note: (lot.note ? lot.note + " / " : "") + (sameStore ? "エリア移動で入荷" : "店舗間移動で入荷"),
@@ -2833,6 +2884,29 @@ const PageStock = {
     const id = cssId(item.isbn);
     (item.tags_by_store || []).forEach((sec) => {
       const secId = `${id}-${sec.store_id}`;
+
+      const tagToggleBtn = document.getElementById(`tagform-toggle-${secId}`);
+      const tagFormRow = document.getElementById(`tagform-row-${secId}`);
+      if (tagToggleBtn && tagFormRow) {
+        tagToggleBtn.onclick = (e) => {
+          e.stopPropagation();
+          const showing = tagFormRow.style.display !== "none";
+          tagFormRow.style.display = showing ? "none" : "flex";
+          if (!showing) document.getElementById(`taginput-${secId}`).focus();
+        };
+      }
+
+      const moveToggleBtn = document.getElementById(`move-toggle-${secId}`);
+      const moveFormEl = document.getElementById(`move-form-${secId}`);
+      if (moveToggleBtn && moveFormEl) {
+        moveToggleBtn.onclick = (e) => {
+          e.stopPropagation();
+          const showing = moveFormEl.style.display !== "none";
+          moveFormEl.style.display = showing ? "none" : "block";
+          moveToggleBtn.textContent = (showing ? "▸" : "▾") + " 在庫を移動する";
+        };
+      }
+
       const addBtn = document.getElementById(`tagadd-${secId}`);
       if (addBtn) {
         addBtn.onclick = async (e) => {
@@ -2970,7 +3044,7 @@ const PageStock = {
         if (floorQty > 0) fromLocOptions.push({ value: "floor", label: `店内(在庫${floorQty}冊)` });
         if (warehouseQty > 0) fromLocOptions.push({ value: "warehouse", label: `倉庫(在庫${warehouseQty}冊)` });
 
-        let moveFormHtml = '<p class="empty-msg" style="font-style:normal; margin-top:10px;">移動できる在庫がありません</p>';
+        let moveFormHtml = "";
         if (fromLocOptions.length && sec.store_id !== null) {
           const defaultFromLoc = fromLocOptions[0].value;
           const otherStore = StoreState.stores.find((s) => s.id !== sec.store_id);
@@ -2979,57 +3053,60 @@ const PageStock = {
           const maxQty = Math.max(floorQty, warehouseQty);
 
           moveFormHtml = `
-            <div class="stock-move-form">
-              <strong style="font-size:0.85em;">在庫を移動する</strong>
-              <div class="form-inline" style="margin-top:6px; align-items:flex-end;">
-                <div class="form-row">
-                  <label>移動元エリア</label>
-                  <select id="move-from-loc-${secId}">
-                    ${fromLocOptions.map((o) => `<option value="${o.value}">${Util.escapeHtml(o.label)}</option>`).join("")}
-                  </select>
-                </div>
-                <div class="form-row">
-                  <label>移動先店舗</label>
-                  <select id="move-to-store-${secId}">
-                    ${StoreState.stores.map((s) => `<option value="${s.id}" ${s.id === defaultToStoreId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`).join("")}
-                  </select>
-                </div>
-                <div class="form-row">
-                  <label>移動先エリア</label>
-                  <select id="move-to-loc-${secId}">
-                    <option value="floor" ${defaultToLoc === "floor" ? "selected" : ""}>店内</option>
-                    <option value="warehouse" ${defaultToLoc === "warehouse" ? "selected" : ""}>倉庫</option>
-                  </select>
-                </div>
-                <div class="form-row">
-                  <label>数量</label>
-                  <input type="number" min="1" max="${maxQty}" value="1" id="move-qty-${secId}" style="width:70px;">
-                </div>
-                <div class="form-row">
-                  <label>移動日</label>
-                  <input type="date" id="move-date-${secId}" value="${Util.todayStr()}">
-                </div>
-                <button class="small" id="move-btn-${secId}">移動する</button>
+            <div class="form-inline detail-move-fields">
+              <div class="form-row">
+                <label>移動元エリア</label>
+                <select id="move-from-loc-${secId}">
+                  ${fromLocOptions.map((o) => `<option value="${o.value}">${Util.escapeHtml(o.label)}</option>`).join("")}
+                </select>
               </div>
+              <div class="form-row">
+                <label>移動先店舗</label>
+                <select id="move-to-store-${secId}">
+                  ${StoreState.stores.map((s) => `<option value="${s.id}" ${s.id === defaultToStoreId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`).join("")}
+                </select>
+              </div>
+              <div class="form-row">
+                <label>移動先エリア</label>
+                <select id="move-to-loc-${secId}">
+                  <option value="floor" ${defaultToLoc === "floor" ? "selected" : ""}>店内</option>
+                  <option value="warehouse" ${defaultToLoc === "warehouse" ? "selected" : ""}>倉庫</option>
+                </select>
+              </div>
+              <div class="form-row">
+                <label>数量</label>
+                <input type="number" min="1" max="${maxQty}" value="1" id="move-qty-${secId}" style="width:70px;">
+              </div>
+              <div class="form-row">
+                <label>移動日</label>
+                <input type="date" id="move-date-${secId}" value="${Util.todayStr()}">
+              </div>
+              <button class="small" id="move-btn-${secId}">移動する</button>
             </div>
           `;
         }
 
+        const hasMoveOptions = fromLocOptions.length && sec.store_id !== null;
+
         return `
           <div class="stock-detail-store-section">
-            <h4>${Util.escapeHtml(sec.store_name || "(店舗不明)")}</h4>
-            <div style="margin:6px 0;">
-              ${tagPills || '<span class="empty-msg" style="font-style:normal;">タグ未設定</span>'}
+            <div class="detail-section-header">
+              <strong class="detail-store-name">${Util.escapeHtml(sec.store_name || "(店舗不明)")}</strong>
+              <span class="detail-tags">${tagPills || '<span class="empty-msg" style="font-style:normal;">タグ未設定</span>'}</span>
+              <button class="tiny-link" id="tagform-toggle-${secId}">+ タグ追加</button>
             </div>
-            <div class="form-inline" style="margin-bottom:10px;">
+            <div class="detail-tag-add-row" id="tagform-row-${secId}" style="display:none;">
               <input type="text" id="taginput-${secId}" placeholder="新しいタグ(例: 文庫棚A-3)" style="max-width:220px;">
-              <button class="small" id="tagadd-${secId}">タグ追加</button>
+              <button class="small" id="tagadd-${secId}">追加</button>
             </div>
-            <table>
+            <table class="detail-lot-table">
               <thead><tr><th>入荷形態</th><th>保管場所</th><th>卸会社</th><th>数量</th><th>入荷日</th><th>返品期限</th><th>備考</th></tr></thead>
               <tbody>${lotRows || '<tr><td colspan="7" class="empty-msg">在庫ロットがありません</td></tr>'}</tbody>
             </table>
-            ${moveFormHtml}
+            ${hasMoveOptions ? `
+              <button class="tiny-link detail-move-toggle" id="move-toggle-${secId}">▸ 在庫を移動する</button>
+              <div class="stock-move-form" id="move-form-${secId}" style="display:none;">${moveFormHtml}</div>
+            ` : ""}
           </div>
         `;
       }).join("");
