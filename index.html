@@ -500,6 +500,13 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
   margin-top: 4px;
   display: inline-block;
 }
+.lot-edit-row td {
+  background: #f7f8fa;
+  padding: 8px 12px !important;
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
 .stock-detail-book-edit {
   margin-bottom: 10px;
 }
@@ -1193,6 +1200,25 @@ const Crud = {
       status: "active", source: "manual", note: req.note || "",
     };
     state.stockLots.push(lot);
+    return lot;
+  },
+
+  // 既に登録済みの在庫ロットの記録内容(卸会社・入荷形態・本体価格・仕入単価・入荷日・返品期限・備考)を
+  // 後から修正するための関数。数量と保管場所はここでは扱わない
+  // (数量は棚卸、保管場所は在庫移動で、それぞれ履歴が残る形で修正する専用の仕組みが既にあるため)。
+  updateLot(state, lotId, updates) {
+    const lot = state.stockLots.find((l) => l.id === lotId);
+    if (!lot) throw new Error("在庫ロットが見つかりません");
+    if (updates.purchaseType === "consignment" && !updates.consignmentDeadline) {
+      throw new Error("委託の場合は返品期限を指定してください");
+    }
+    lot.wholesalerId = updates.wholesalerId || null;
+    lot.purchaseType = updates.purchaseType;
+    lot.unitCost = updates.unitCost || 0;
+    lot.price = updates.price || 0;
+    lot.receivedDate = updates.receivedDate || lot.receivedDate;
+    lot.consignmentDeadline = updates.purchaseType === "consignment" ? (updates.consignmentDeadline || null) : null;
+    lot.note = updates.note || "";
     return lot;
   },
 
@@ -2072,6 +2098,22 @@ const LocalApi = {
         location: body.location === "warehouse" ? "warehouse" : "floor",
       };
       const lot = await Crud.receiveStock(state, storeId, req);
+      await persistState();
+      const w = lot.wholesalerId ? state.wholesalers.find((x) => x.id === lot.wholesalerId) : null;
+      const st = state.stores.find((x) => x.id === lot.storeId);
+      return mapLot({ ...lot, wholesalerName: w ? w.name : null, storeName: st ? st.name : null });
+    }
+    if (method === "PUT" && (m = rawPath.match(/^\/api\/stock-lots\/(\d+)$/))) {
+      const lotId = Number(m[1]);
+      if (body.purchase_type === "consignment" && !body.consignment_deadline) {
+        throw new Error("委託の場合は返品期限(consignment_deadline)を指定してください");
+      }
+      const lot = Crud.updateLot(state, lotId, {
+        wholesalerId: body.wholesaler_id || null, purchaseType: body.purchase_type,
+        unitCost: body.unit_cost || 0, price: body.price || 0,
+        receivedDate: body.received_date || null, consignmentDeadline: body.consignment_deadline || null,
+        note: body.note || "",
+      });
       await persistState();
       const w = lot.wholesalerId ? state.wholesalers.find((x) => x.id === lot.wholesalerId) : null;
       const st = state.stores.find((x) => x.id === lot.storeId);
@@ -3166,6 +3208,36 @@ const PageStock = {
       };
     }
 
+    // 個別の在庫ロット(入荷形態・卸会社・本体価格・仕入単価・入荷日・返品期限・備考)の編集
+    item.lots.forEach((lot) => {
+      const lotToggleBtn = document.getElementById(`lotedit-toggle-${lot.id}`);
+      const lotFormRow = document.getElementById(`lotedit-row-${lot.id}`);
+      if (!lotToggleBtn || !lotFormRow) return;
+      const lotFormCell = lotFormRow.querySelector("td");
+      lotToggleBtn.onclick = async (e) => {
+        e.stopPropagation();
+        const showing = lotFormRow.style.display !== "none";
+        if (showing) {
+          lotFormRow.style.display = "none";
+          lotToggleBtn.textContent = "編集";
+          return;
+        }
+        lotFormRow.style.display = "table-row";
+        lotToggleBtn.textContent = "閉じる";
+        if (!lotFormCell.dataset.loaded) {
+          lotFormCell.innerHTML = `<p class="loading">読み込み中...</p>`;
+          try {
+            const wholesalers = await Api.get("/api/wholesalers");
+            lotFormCell.innerHTML = this.buildLotEditFormHtml(lot, wholesalers);
+            lotFormCell.dataset.loaded = "1";
+            this.wireLotEditForm(lot, root, params);
+          } catch (e2) {
+            lotFormCell.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e2.message)}</p>`;
+          }
+        }
+      };
+    });
+
     (item.tags_by_store || []).forEach((sec) => {
       const secId = `${id}-${sec.store_id}`;
 
@@ -3323,6 +3395,10 @@ const PageStock = {
             <td>${Util.fmtDate(lot.received_date)}</td>
             <td>${lot.consignment_deadline ? Util.fmtDate(lot.consignment_deadline) : "-"}</td>
             <td>${Util.escapeHtml(lot.note || "")}</td>
+            <td><button class="tiny-link" id="lotedit-toggle-${lot.id}">編集</button></td>
+          </tr>
+          <tr class="lot-edit-row" id="lotedit-row-${lot.id}" style="display:none;">
+            <td colspan="9"></td>
           </tr>
         `).join("");
 
@@ -3394,11 +3470,11 @@ const PageStock = {
             </div>
             <table class="detail-lot-table">
               <colgroup>
-                <col style="width:9%"><col style="width:9%"><col style="width:18%"><col style="width:7%">
-                <col style="width:12%"><col style="width:11%"><col style="width:11%"><col style="width:23%">
+                <col style="width:8%"><col style="width:8%"><col style="width:16%"><col style="width:6%">
+                <col style="width:11%"><col style="width:10%"><col style="width:10%"><col style="width:20%"><col style="width:11%">
               </colgroup>
-              <thead><tr><th>入荷形態</th><th>保管場所</th><th>卸会社</th><th>数量</th><th>本体価格(税別)</th><th>入荷日</th><th>返品期限</th><th>備考</th></tr></thead>
-              <tbody>${lotRows || '<tr><td colspan="8" class="empty-msg">在庫ロットがありません</td></tr>'}</tbody>
+              <thead><tr><th>入荷形態</th><th>保管場所</th><th>卸会社</th><th>数量</th><th>本体価格(税別)</th><th>入荷日</th><th>返品期限</th><th>備考</th><th></th></tr></thead>
+              <tbody>${lotRows || '<tr><td colspan="9" class="empty-msg">在庫ロットがありません</td></tr>'}</tbody>
             </table>
             ${hasMoveOptions ? `
               <button class="tiny-link detail-move-toggle" id="move-toggle-${secId}">▸ 在庫を移動する</button>
@@ -3469,6 +3545,102 @@ const PageStock = {
         Util.toast("更新に失敗しました: " + e2.message, "error");
       }
     };
+  },
+
+  // 既存の在庫ロット1件分の編集フォーム。数量・保管場所はここでは扱わない
+  // (数量は棚卸、保管場所は在庫移動でそれぞれ履歴付きで修正する)。
+  buildLotEditFormHtml(lot, wholesalers) {
+    const id = lot.id;
+    const isConsignment = lot.purchase_type === "consignment";
+    return `
+      <div class="stock-move-form" style="margin-top:0; padding-top:0; border-top:none;">
+      <div class="form-inline detail-move-fields">
+        <div class="form-row">
+          <label>入荷形態</label>
+          <select id="lotedit-ptype-${id}">
+            <option value="buy" ${!isConsignment ? "selected" : ""}>買切</option>
+            <option value="consignment" ${isConsignment ? "selected" : ""}>委託</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>卸会社</label>
+          <select id="lotedit-wholesaler-${id}">
+            <option value="">(指定なし)</option>
+            ${wholesalers.map((w) => `<option value="${w.id}" ${String(w.id) === String(lot.wholesaler_id) ? "selected" : ""}>${Util.escapeHtml(w.name)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-row">
+          <label>本体価格(円・税別)</label>
+          <input type="number" id="lotedit-price-${id}" value="${lot.price || 0}" style="width:100px;">
+        </div>
+        <div class="form-row">
+          <label>仕入単価(円)</label>
+          <input type="number" id="lotedit-unitcost-${id}" value="${lot.unit_cost || 0}" style="width:100px;">
+        </div>
+        <div class="form-row">
+          <label>入荷日</label>
+          <input type="date" id="lotedit-receiveddate-${id}" value="${lot.received_date || ""}">
+        </div>
+        <div class="form-row" id="lotedit-deadline-row-${id}" style="${isConsignment ? "" : "display:none;"}">
+          <label>返品期限</label>
+          <input type="date" id="lotedit-deadline-${id}" value="${lot.consignment_deadline || ""}">
+        </div>
+        <div class="form-row" style="flex:1; min-width:160px;">
+          <label>備考</label>
+          <input type="text" id="lotedit-note-${id}" value="${Util.escapeHtml(lot.note || "")}">
+        </div>
+      </div>
+      <button class="small" id="lotedit-save-${id}">保存</button>
+      <button class="small secondary" id="lotedit-cancel-${id}">キャンセル</button>
+      </div>
+    `;
+  },
+
+  wireLotEditForm(lot, root, params) {
+    const id = lot.id;
+    const ptypeSelect = document.getElementById(`lotedit-ptype-${id}`);
+    const deadlineRow = document.getElementById(`lotedit-deadline-row-${id}`);
+    if (ptypeSelect && deadlineRow) {
+      ptypeSelect.onchange = () => {
+        deadlineRow.style.display = ptypeSelect.value === "consignment" ? "flex" : "none";
+      };
+    }
+    const cancelBtn = document.getElementById(`lotedit-cancel-${id}`);
+    if (cancelBtn) {
+      cancelBtn.onclick = (e) => {
+        e.stopPropagation();
+        document.getElementById(`lotedit-toggle-${id}`).click();
+      };
+    }
+    const saveBtn = document.getElementById(`lotedit-save-${id}`);
+    if (saveBtn) {
+      saveBtn.onclick = async (e) => {
+        e.stopPropagation();
+        const purchaseType = ptypeSelect.value;
+        const deadline = document.getElementById(`lotedit-deadline-${id}`).value;
+        if (purchaseType === "consignment" && !deadline) {
+          Util.toast("委託の場合は返品期限を入力してください", "warning");
+          return;
+        }
+        try {
+          await Api.put(`/api/stock-lots/${id}`, {
+            wholesaler_id: document.getElementById(`lotedit-wholesaler-${id}`).value
+              ? parseInt(document.getElementById(`lotedit-wholesaler-${id}`).value, 10) : null,
+            purchase_type: purchaseType,
+            price: parseInt(document.getElementById(`lotedit-price-${id}`).value || "0", 10),
+            unit_cost: parseInt(document.getElementById(`lotedit-unitcost-${id}`).value || "0", 10),
+            received_date: document.getElementById(`lotedit-receiveddate-${id}`).value || null,
+            consignment_deadline: purchaseType === "consignment" ? deadline : null,
+            note: document.getElementById(`lotedit-note-${id}`).value,
+          });
+          Util.toast("在庫ロットを更新しました", "success");
+          this.expandedIds[lot.isbn] = true;
+          this.loadAndRenderList(root, params);
+        } catch (e2) {
+          Util.toast("更新に失敗しました: " + e2.message, "error");
+        }
+      };
+    }
   },
 };
 
