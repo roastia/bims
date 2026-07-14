@@ -1728,6 +1728,8 @@ const PageStock = {
       return;
     }
 
+    const storeName = StoreState.getCurrentStore().name;
+
     listEl.innerHTML = `
       <p class="stock-count">${items.length}件</p>
       <div class="stock-table-wrap">
@@ -1737,14 +1739,16 @@ const PageStock = {
               <th>書名</th>
               <th>著者</th>
               <th>出版社</th>
-              <th>ISBN</th>
+              <th>卸会社</th>
+              <th class="num">金額</th>
+              <th>店舗</th>
+              <th class="num">在庫数</th>
               <th>タグ</th>
-              <th class="num">合計在庫</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            ${items.map((item) => this.renderRow(item)).join("")}
+            ${items.map((item) => this.renderRow(item, storeName)).join("")}
           </tbody>
         </table>
       </div>
@@ -1807,9 +1811,12 @@ const PageStock = {
     });
   },
 
-  renderRow(item) {
+  renderRow(item, storeName) {
     const id = cssId(item.isbn);
     const tagsText = item.tags.length ? item.tags.join(", ") : "-";
+    const wholesalerNames = [...new Set(item.lots.map((l) => l.wholesaler_name).filter(Boolean))];
+    const wholesalerText = wholesalerNames.length ? wholesalerNames.join("、") : "-";
+    const priceText = item.price ? Util.fmtYen(item.price) : "-";
 
     const lotRows = item.lots.map((lot) => `
       <tr>
@@ -1831,16 +1838,18 @@ const PageStock = {
         <td class="stock-title" title="${Util.escapeHtml(item.title || "")}">${Util.escapeHtml(item.title || "(書名未登録)")}</td>
         <td class="stock-ellipsis">${Util.escapeHtml(item.author || "")}</td>
         <td class="stock-ellipsis">${Util.escapeHtml(item.publisher || "")}</td>
-        <td class="mono">${Util.escapeHtml(item.isbn)}</td>
-        <td class="stock-ellipsis">${Util.escapeHtml(tagsText)}</td>
+        <td class="stock-ellipsis" title="${Util.escapeHtml(wholesalerText)}">${Util.escapeHtml(wholesalerText)}</td>
+        <td class="num">${priceText}</td>
+        <td class="stock-ellipsis">${Util.escapeHtml(storeName)}</td>
         <td class="num">${item.total_quantity}</td>
+        <td class="stock-ellipsis" title="${Util.escapeHtml(tagsText)}">${Util.escapeHtml(tagsText)}</td>
         <td><button class="small secondary" id="toggle-${id}">詳細</button></td>
       </tr>
       <tr class="stock-detail-row" id="detail-${id}" style="display:none;">
-        <td colspan="7">
+        <td colspan="9">
           <div class="stock-detail-inner">
             <div style="color:var(--text-muted); font-size:0.85em; margin-bottom:8px;">
-              ${item.price ? Util.fmtYen(item.price) : ""}
+              ISBN: ${Util.escapeHtml(item.isbn)}
             </div>
             <div style="margin:6px 0;">
               ${tagPills || '<span class="empty-msg" style="font-style:normal;">タグ未設定</span>'}
