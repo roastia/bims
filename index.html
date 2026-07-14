@@ -479,10 +479,22 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
   gap: 6px;
   margin-bottom: 8px;
 }
+.detail-lot-table {
+  table-layout: fixed;
+}
 .detail-lot-table th,
 .detail-lot-table td {
   padding: 5px 8px;
   font-size: 0.9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.detail-lot-table th:last-child,
+.detail-lot-table td:last-child {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
 }
 .detail-move-toggle {
   margin-top: 4px;
@@ -3381,6 +3393,10 @@ const PageStock = {
               <button class="small" id="tagadd-${secId}">追加</button>
             </div>
             <table class="detail-lot-table">
+              <colgroup>
+                <col style="width:9%"><col style="width:9%"><col style="width:18%"><col style="width:7%">
+                <col style="width:12%"><col style="width:11%"><col style="width:11%"><col style="width:23%">
+              </colgroup>
               <thead><tr><th>入荷形態</th><th>保管場所</th><th>卸会社</th><th>数量</th><th>本体価格(税別)</th><th>入荷日</th><th>返品期限</th><th>備考</th></tr></thead>
               <tbody>${lotRows || '<tr><td colspan="8" class="empty-msg">在庫ロットがありません</td></tr>'}</tbody>
             </table>
