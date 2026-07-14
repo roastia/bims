@@ -306,6 +306,67 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
   white-space: normal;
 }
 
+.chart-bar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chart-bar-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 60px;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88em;
+}
+.chart-bar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chart-bar-track {
+  background: var(--bg);
+  border-radius: 4px;
+  height: 14px;
+  overflow: hidden;
+}
+.chart-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.2s;
+}
+.chart-bar-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.chart-donut-wrap {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.chart-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.88em;
+}
+.chart-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chart-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+@media (max-width: 700px) {
+  .chart-bar-row { grid-template-columns: 100px 1fr 50px; }
+}
+
 </style>
 </head>
 <body>
@@ -322,8 +383,8 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
     <a href="#/sales" data-route="/sales">売上履歴</a>
     <a href="#/returns" data-route="/returns">返品管理</a>
     <a href="#/stocktake" data-route="/stocktake">棚卸</a>
+    <a href="#/analytics" data-route="/analytics">グラフ</a>
     <a href="#/masters" data-route="/masters">マスタ管理</a>
-    <a href="#/data" data-route="/data">データ管理</a>
   </nav>
   <div class="topbar-right">
     <label class="store-switcher-label">店舗:</label>
@@ -1677,6 +1738,15 @@ const PageDashboard = {
       root.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
       return;
     }
+    const state = await ensureStateLoaded();
+    const stats = {
+      stores: state.stores.length,
+      wholesalers: state.wholesalers.length,
+      books: Object.keys(state.books).length,
+      stockLots: state.stockLots.length,
+      sales: state.sales.length,
+      returns: state.returns.length,
+    };
 
     const consignmentRows = data.consignment_alerts.length
       ? data.consignment_alerts.map((a) => `
@@ -1701,7 +1771,7 @@ const PageDashboard = {
 
     root.innerHTML = `
       <h1>ダッシュボード</h1>
-      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} の状況サマリー</p>
+      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} の状況サマリーと、データのバックアップ・移行をまとめて確認できます。</p>
 
       <div class="grid-3">
         <div class="card stat-box">
@@ -1740,6 +1810,301 @@ const PageDashboard = {
             <thead><tr><th>順位</th><th>書名</th><th>販売数</th></tr></thead>
             <tbody>${bestSellerRows}</tbody>
           </table>
+        </div>
+      </div>
+
+      <h2 style="margin-top:36px;">データのバックアップ・他のパソコンへの移行</h2>
+      <p class="subtitle">このアプリはインターネットやサーバーを使わず、このブラウザの中だけにデータを保存しています。定期的にエクスポートしてバックアップを取ることをおすすめします。</p>
+
+      <div class="card">
+        <h2 style="margin-top:0;">現在のデータ件数</h2>
+        <table>
+          <tbody>
+            <tr><td>店舗</td><td>${stats.stores} 件</td></tr>
+            <tr><td>卸会社</td><td>${stats.wholesalers} 件</td></tr>
+            <tr><td>書誌(登録タイトル数)</td><td>${stats.books} 件</td></tr>
+            <tr><td>在庫ロット</td><td>${stats.stockLots} 件</td></tr>
+            <tr><td>売上履歴</td><td>${stats.sales} 件</td></tr>
+            <tr><td>返品履歴</td><td>${stats.returns} 件</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;">エクスポート(バックアップ・他のパソコンへ渡す)</h2>
+        <p>すべてのデータを1つのファイル(.json)としてダウンロードします。他のパソコンでこのアプリを開き、下の「インポート」でこのファイルを読み込めば、同じデータを引き継げます。</p>
+        <button id="export-btn">エクスポートする</button>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;">インポート(バックアップから復元・他のパソコンのデータを取り込む)</h2>
+        <p style="color:var(--danger);">注意: インポートすると、今このパソコンに保存されているデータはすべて上書きされます。先に念のためエクスポートしておくことをおすすめします。</p>
+        <input type="file" id="import-file" accept=".json">
+        <button class="danger" id="import-btn">インポートする(現在のデータを上書き)</button>
+      </div>
+    `;
+
+    document.getElementById("export-btn").onclick = () => {
+      const json = JSON.stringify(AppState.state, null, 2);
+      const today = todayStr().replace(/-/g, "");
+      const blob = new Blob([json], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `bookstore_backup_${today}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      Util.toast("エクスポートしました", "success");
+    };
+
+    document.getElementById("import-btn").onclick = async () => {
+      const fileInput = document.getElementById("import-file");
+      if (!fileInput.files.length) { Util.toast("JSONファイルを選択してください", "warning"); return; }
+      const ok = window.confirm("現在保存されているデータはすべて上書きされます。よろしいですか?");
+      if (!ok) return;
+      try {
+        const text = await fileInput.files[0].text();
+        const parsed = JSON.parse(text);
+        if (!parsed || !parsed.stores || !parsed.books) {
+          throw new Error("このファイルはバックアップ形式として認識できませんでした");
+        }
+        AppState.state = parsed;
+        await persistState();
+        Util.toast("インポートしました。画面を再読み込みします", "success");
+        setTimeout(() => location.reload(), 800);
+      } catch (e) {
+        Util.toast("インポートに失敗しました: " + e.message, "error");
+      }
+    };
+  },
+};
+
+
+// ---- 10b_page_analytics.js ----
+// ============================================================
+// グラフ表示ページ: 在庫・売上などのデータを可視化する
+// 外部ライブラリを使わず、HTML/CSSのバーとSVGの円グラフ・折れ線グラフで表現する
+// ============================================================
+const Charts = {
+  palette: ["#2c5f8a", "#d97b3f", "#2e7d4f", "#b8860b", "#6a3fa0", "#c0392b", "#3a8fb7", "#8a6d3b", "#5a8f5a", "#a45a8f"],
+
+  donutSvg(data, opts) {
+    opts = opts || {};
+    const size = opts.size || 160;
+    const thickness = opts.thickness || 26;
+    const r = (size - thickness) / 2;
+    const cx = size / 2, cy = size / 2;
+    const circumference = 2 * Math.PI * r;
+    const total = data.reduce((s, d) => s + d.value, 0);
+    if (total <= 0) return `<p class="empty-msg">データがありません</p>`;
+
+    let offset = 0;
+    const circles = data.filter((d) => d.value > 0).map((d) => {
+      const frac = d.value / total;
+      const segLen = frac * circumference;
+      const dashoffset = -offset;
+      offset += segLen;
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${d.color}" stroke-width="${thickness}" stroke-dasharray="${segLen.toFixed(2)} ${(circumference - segLen).toFixed(2)}" stroke-dashoffset="${dashoffset.toFixed(2)}"></circle>`;
+    }).join("");
+
+    const legend = data.map((d) => {
+      const pct = total > 0 ? Math.round((d.value / total) * 100) : 0;
+      return `<div class="chart-legend-row"><span class="chart-legend-dot" style="background:${d.color}"></span>${Util.escapeHtml(d.label)}: ${d.value} (${pct}%)</div>`;
+    }).join("");
+
+    return `
+      <div class="chart-donut-wrap">
+        <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">
+          <g transform="rotate(-90 ${cx} ${cy})">${circles}</g>
+        </svg>
+        <div class="chart-legend">${legend}</div>
+      </div>
+    `;
+  },
+
+  barChartHtml(data, opts) {
+    opts = opts || {};
+    const color = opts.color || "var(--primary)";
+    const unit = opts.unit || "";
+    if (!data.length) return `<p class="empty-msg">データがありません</p>`;
+    const max = Math.max(...data.map((d) => d.value), 1);
+    return `
+      <div class="chart-bar-list">
+        ${data.map((d) => `
+          <div class="chart-bar-row">
+            <div class="chart-bar-label" title="${Util.escapeHtml(d.label)}">${Util.escapeHtml(d.label)}</div>
+            <div class="chart-bar-track">
+              <div class="chart-bar-fill" style="width:${Math.max((d.value / max) * 100, 2)}%; background:${color};"></div>
+            </div>
+            <div class="chart-bar-value">${d.value}${unit}</div>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  },
+
+  lineSvg(data, opts) {
+    opts = opts || {};
+    const width = opts.width || 640, height = opts.height || 180;
+    const color = opts.color || "#2c5f8a";
+    const padding = 26;
+    if (!data.length) return `<p class="empty-msg">データがありません</p>`;
+
+    const values = data.map((d) => d.value);
+    const maxV = Math.max(...values, 1);
+    const stepX = data.length > 1 ? (width - padding * 2) / (data.length - 1) : 0;
+    const points = data.map((d, i) => {
+      const x = padding + i * stepX;
+      const y = height - padding - (d.value / maxV) * (height - padding * 2);
+      return { x, y };
+    });
+    const polylineStr = points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+    const labelStep = Math.max(1, Math.ceil(data.length / 6));
+    const xLabels = data.map((d, i) => (i % labelStep === 0 || i === data.length - 1)
+      ? `<text x="${points[i].x.toFixed(1)}" y="${height - 6}" font-size="9" fill="#8a94a0" text-anchor="middle">${Util.escapeHtml(d.label)}</text>`
+      : "").join("");
+    const circles = points.map((p) => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.5" fill="${color}"></circle>`).join("");
+
+    return `
+      <svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" preserveAspectRatio="xMidYMid meet">
+        <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="#dde1e6" stroke-width="1"></line>
+        <polyline points="${polylineStr}" fill="none" stroke="${color}" stroke-width="2"></polyline>
+        ${circles}
+        ${xLabels}
+      </svg>
+    `;
+  },
+};
+
+const PageAnalytics = {
+  async render(root) {
+    root.innerHTML = `<p class="loading">読み込み中...</p>`;
+    const storeId = StoreState.currentStoreId;
+    let items, sales, dashboard;
+    try {
+      [items, sales, dashboard] = await Promise.all([
+        Api.get(`/api/stores/${storeId}/stock?q=`),
+        Api.get(`/api/stores/${storeId}/sales?days=30`),
+        Api.get(`/api/stores/${storeId}/dashboard`),
+      ]);
+    } catch (e) {
+      root.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
+      return;
+    }
+
+    // ---- 売上推移(直近30日・日別冊数) ----
+    const dayMap = {};
+    const today = new Date();
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const key = Util.fmtDate(d.toISOString());
+      dayMap[key] = 0;
+    }
+    sales.forEach((s) => {
+      const key = Util.fmtDate(s.sale_date);
+      if (key in dayMap) dayMap[key] += s.quantity;
+    });
+    const salesTrend = Object.keys(dayMap).sort().map((k) => ({ label: k.slice(5), value: dayMap[k] }));
+
+    // ---- 売れ筋ランキング(直近30日・上位10) ----
+    const bestSellerData = dashboard.best_sellers.slice(0, 10).map((b) => ({
+      label: b.title || b.isbn, value: b.total_sold,
+    }));
+
+    // ---- 全ロットを集計対象にする ----
+    const allLots = [];
+    items.forEach((it) => it.lots.forEach((lot) => allLots.push({ ...lot, publisher: it.publisher, price: it.price, isbn: it.isbn })));
+
+    // 仕入形態別
+    const byPurchaseType = {};
+    allLots.forEach((l) => { byPurchaseType[l.purchase_type] = (byPurchaseType[l.purchase_type] || 0) + l.quantity; });
+    const purchaseTypeData = Object.keys(byPurchaseType).map((k, i) => ({
+      label: Util.purchaseTypeLabel(k), value: byPurchaseType[k], color: Charts.palette[i % Charts.palette.length],
+    }));
+
+    // 保管場所別
+    const byLocation = {};
+    allLots.forEach((l) => { byLocation[l.location] = (byLocation[l.location] || 0) + l.quantity; });
+    const locationData = Object.keys(byLocation).map((k, i) => ({
+      label: Util.locationLabel(k), value: byLocation[k], color: Charts.palette[(i + 3) % Charts.palette.length],
+    }));
+
+    // 卸会社別(在庫点数)
+    const byWholesaler = {};
+    allLots.forEach((l) => {
+      const name = l.wholesaler_name || "卸会社不明";
+      byWholesaler[name] = (byWholesaler[name] || 0) + l.quantity;
+    });
+    const wholesalerData = Object.entries(byWholesaler)
+      .sort((a, b) => b[1] - a[1]).slice(0, 10)
+      .map(([label, value]) => ({ label, value }));
+
+    // 出版社別(在庫点数・上位10)
+    const byPublisher = {};
+    items.forEach((it) => {
+      const name = it.publisher || "出版社不明";
+      byPublisher[name] = (byPublisher[name] || 0) + it.total_quantity;
+    });
+    const publisherData = Object.entries(byPublisher)
+      .sort((a, b) => b[1] - a[1]).slice(0, 10)
+      .map(([label, value]) => ({ label, value }));
+
+    // 価格帯分布(タイトル数)
+    const priceBuckets = [
+      { label: "〜500円", min: 0, max: 500 },
+      { label: "501〜1000円", min: 501, max: 1000 },
+      { label: "1001〜1500円", min: 1001, max: 1500 },
+      { label: "1501〜2000円", min: 1501, max: 2000 },
+      { label: "2001〜3000円", min: 2001, max: 3000 },
+      { label: "3001円〜", min: 3001, max: Infinity },
+    ];
+    const priceData = priceBuckets.map((b) => ({
+      label: b.label,
+      value: items.filter((it) => it.price && it.price >= b.min && it.price <= b.max).length,
+    }));
+
+    root.innerHTML = `
+      <h1>グラフ</h1>
+      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} の在庫・売上データをグラフで確認できます。</p>
+
+      <div class="card">
+        <h2 style="margin-top:0;">売上推移(直近30日・冊数)</h2>
+        ${Charts.lineSvg(salesTrend)}
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h2 style="margin-top:0;">売れ筋ランキング(直近30日・上位10)</h2>
+          ${Charts.barChartHtml(bestSellerData, { color: "var(--accent)", unit: "冊" })}
+        </div>
+        <div class="card">
+          <h2 style="margin-top:0;">出版社別 在庫点数(上位10)</h2>
+          ${Charts.barChartHtml(publisherData, { unit: "冊" })}
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h2 style="margin-top:0;">仕入形態別 在庫点数</h2>
+          ${Charts.donutSvg(purchaseTypeData)}
+        </div>
+        <div class="card">
+          <h2 style="margin-top:0;">保管場所別 在庫点数</h2>
+          ${Charts.donutSvg(locationData)}
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h2 style="margin-top:0;">卸会社別 在庫点数(上位10)</h2>
+          ${Charts.barChartHtml(wholesalerData, { unit: "冊" })}
+        </div>
+        <div class="card">
+          <h2 style="margin-top:0;">価格帯分布(タイトル数)</h2>
+          ${Charts.barChartHtml(priceData, { color: "var(--success)", unit: "点" })}
         </div>
       </div>
     `;
@@ -2065,6 +2430,22 @@ const PageReceive = {
 
     document.getElementById("submit-receive").onclick = () => this.submit(storeId);
     document.getElementById("clear-form").onclick = () => this.cancelCurrentBook();
+
+    // 数量欄でEnter → 価格欄へ、価格欄でEnter → そのまま登録して次の書籍へ
+    // (マウス操作なしで スキャン→数量→価格→Enter の流れだけで次々登録できるようにする)
+    const qtyField = document.getElementById("f-quantity");
+    const priceField = document.getElementById("f-price");
+    qtyField.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      priceField.focus();
+      priceField.select();
+    });
+    priceField.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      this.submit(storeId);
+    });
   },
 
   renderLogRows() {
@@ -2128,6 +2509,10 @@ const PageReceive = {
       document.getElementById("f-price").value = result.price;
       document.getElementById("f-classification").value = result.classification_text;
       Util.toast("価格・分類コードを反映しました", "success");
+      // 2回のスキャンが完了したので、続けて数量を手入力できるようフォーカスを移す
+      const qtyField = document.getElementById("f-quantity");
+      qtyField.focus();
+      qtyField.select();
     } else {
       Util.toast("認識できないバーコードです", "error");
     }
@@ -2141,12 +2526,13 @@ const PageReceive = {
     document.getElementById("f-publisher").value = this.currentBook.publisher || "";
     document.getElementById("f-price").value = this.currentBook.price || 0;
     document.getElementById("f-classification").value = this.currentBook.classification_text || "";
-    const qtyField = document.getElementById("f-quantity");
-    qtyField.value = 1;
+    document.getElementById("f-quantity").value = 1;
     document.getElementById("f-unit-cost").value = 0;
     document.getElementById("f-note").value = "";
-    qtyField.focus();
-    qtyField.select();
+    // 2段バーコード(ISBN→価格)の2回目をそのままスキャンできるよう、
+    // フォーカスはスキャン欄に置いたままにする(数量欄には移さない)
+    const scanInput = document.getElementById("scan-input");
+    if (scanInput) scanInput.focus();
   },
 
   async submit(storeId) {
@@ -3071,89 +3457,6 @@ const PageMasters = {
 };
 
 
-// ---- 18_page_data.js ----
-const PageData = {
-  async render(root) {
-    const state = await ensureStateLoaded();
-    const stats = {
-      stores: state.stores.length,
-      wholesalers: state.wholesalers.length,
-      books: Object.keys(state.books).length,
-      stockLots: state.stockLots.length,
-      sales: state.sales.length,
-      returns: state.returns.length,
-    };
-
-    root.innerHTML = `
-      <h1>データのバックアップ・他のパソコンへの移行</h1>
-      <p class="subtitle">このアプリはインターネットやサーバーを使わず、このブラウザの中だけにデータを保存しています。定期的にエクスポートしてバックアップを取ることをおすすめします。</p>
-
-      <div class="card">
-        <h2 style="margin-top:0;">現在のデータ件数</h2>
-        <table>
-          <tbody>
-            <tr><td>店舗</td><td>${stats.stores} 件</td></tr>
-            <tr><td>卸会社</td><td>${stats.wholesalers} 件</td></tr>
-            <tr><td>書誌(登録タイトル数)</td><td>${stats.books} 件</td></tr>
-            <tr><td>在庫ロット</td><td>${stats.stockLots} 件</td></tr>
-            <tr><td>売上履歴</td><td>${stats.sales} 件</td></tr>
-            <tr><td>返品履歴</td><td>${stats.returns} 件</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="card">
-        <h2 style="margin-top:0;">エクスポート(バックアップ・他のパソコンへ渡す)</h2>
-        <p>すべてのデータを1つのファイル(.json)としてダウンロードします。他のパソコンでこのアプリを開き、下の「インポート」でこのファイルを読み込めば、同じデータを引き継げます。</p>
-        <button id="export-btn">エクスポートする</button>
-      </div>
-
-      <div class="card">
-        <h2 style="margin-top:0;">インポート(バックアップから復元・他のパソコンのデータを取り込む)</h2>
-        <p style="color:var(--danger);">注意: インポートすると、今このパソコンに保存されているデータはすべて上書きされます。先に念のためエクスポートしておくことをおすすめします。</p>
-        <input type="file" id="import-file" accept=".json">
-        <button class="danger" id="import-btn">インポートする(現在のデータを上書き)</button>
-      </div>
-    `;
-
-    document.getElementById("export-btn").onclick = () => {
-      const json = JSON.stringify(AppState.state, null, 2);
-      const today = todayStr().replace(/-/g, "");
-      const blob = new Blob([json], { type: "application/json;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `bookstore_backup_${today}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
-      Util.toast("エクスポートしました", "success");
-    };
-
-    document.getElementById("import-btn").onclick = async () => {
-      const fileInput = document.getElementById("import-file");
-      if (!fileInput.files.length) { Util.toast("JSONファイルを選択してください", "warning"); return; }
-      const ok = window.confirm("現在保存されているデータはすべて上書きされます。よろしいですか?");
-      if (!ok) return;
-      try {
-        const text = await fileInput.files[0].text();
-        const parsed = JSON.parse(text);
-        if (!parsed || !parsed.stores || !parsed.books) {
-          throw new Error("このファイルはバックアップ形式として認識できませんでした");
-        }
-        AppState.state = parsed;
-        await persistState();
-        Util.toast("インポートしました。画面を再読み込みします", "success");
-        setTimeout(() => location.reload(), 800);
-      } catch (e) {
-        Util.toast("インポートに失敗しました: " + e.message, "error");
-      }
-    };
-  },
-};
-
-
 // ---- 18b_page_transfer.js ----
 const PageTransfer = {
   fromStoreId: null,
@@ -3382,7 +3685,8 @@ const Router = {
     "/stocktake": PageStocktake,
     "/masters": PageMasters,
     "/transfer": PageTransfer,
-    "/data": PageData,
+    "/analytics": PageAnalytics,
+    "/data": PageDashboard, // データ管理はダッシュボードに統合(旧リンク互換のため残す)
   },
 
   parseHash() {
