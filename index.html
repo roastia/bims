@@ -1293,13 +1293,29 @@ const Crud = {
     for (const isbn of Object.keys(byIsbn)) {
       const book = state.books[isbn];
       if (!book) continue;
-      const lotList = byIsbn[isbn];
+      const fullLotList = byIsbn[isbn];
+      const storeIdsForBook = [...new Set(fullLotList.map((l) => l.storeId))];
+
+      // 検索語が(他の店舗ではなく)特定の店舗名だけに一致する場合は、以降の集計・表示・
+      // CSV/PDF出力をその店舗のロットだけに絞り込む(店舗名検索時に他店舗分が混ざらないように)。
+      let matchedStoreIds = null;
+      if (terms.length && storeIdsForBook.length > 1) {
+        const storeMatched = storeIdsForBook.filter((sid) => {
+          const name = (storesById.get(sid) || {}).name;
+          return name && terms.some((t) => name.toLowerCase().includes(t));
+        });
+        if (storeMatched.length > 0 && storeMatched.length < storeIdsForBook.length) {
+          matchedStoreIds = new Set(storeMatched);
+        }
+      }
+      const lotList = matchedStoreIds ? fullLotList.filter((l) => matchedStoreIds.has(l.storeId)) : fullLotList;
+
       const totalQty = lotList.reduce((s, l) => s + l.quantity, 0);
       const floorQty = lotList.filter((l) => (l.location || "floor") === "floor").reduce((s, l) => s + l.quantity, 0);
       const warehouseQty = lotList.filter((l) => l.location === "warehouse").reduce((s, l) => s + l.quantity, 0);
 
-      const storeIdsForBook = [...new Set(lotList.map((l) => l.storeId))];
-      const tagsByStore = storeIdsForBook.map((sid) => {
+      const displayStoreIds = [...new Set(lotList.map((l) => l.storeId))];
+      const tagsByStore = displayStoreIds.map((sid) => {
         const tagIds = bookTagIdsByStoreIsbn.get(sid + "|" + isbn) || [];
         const tagIdSet = new Set(tagIds);
         const names = state.tags.filter((t) => tagIdSet.has(t.id)).map((t) => t.name);
@@ -1323,10 +1339,16 @@ const Crud = {
       });
 
       if (terms.length) {
-        const wholesalerNames = [...new Set(lotOuts.map((l) => l.wholesalerName).filter(Boolean))];
+        // ヒット判定は店舗絞り込み前の全店舗分を対象にする(絞り込みは表示上の都合のため、
+        // 他店舗にしか無い語で一致した行まで除外してしまわないようにする)。
+        const fullStoreNames = storeIdsForBook.map((sid) => (storesById.get(sid) || {}).name).filter(Boolean);
+        const fullWholesalerNames = [...new Set(fullLotList.map((l) => l.wholesalerId ? wholesalersById.get(l.wholesalerId) : null).filter(Boolean).map((w) => w.name))];
+        const fullTagIdSet = new Set();
+        storeIdsForBook.forEach((sid) => { (bookTagIdsByStoreIsbn.get(sid + "|" + isbn) || []).forEach((tid) => fullTagIdSet.add(tid)); });
+        const fullTags = state.tags.filter((t) => fullTagIdSet.has(t.id)).map((t) => t.name);
         const hay = [
           book.isbn, book.title, book.author, book.publisher,
-          ...storeNames, ...tags, ...wholesalerNames,
+          ...fullStoreNames, ...fullTags, ...fullWholesalerNames,
         ].join(" ").toLowerCase();
         const matchesAll = terms.every((t) => hay.includes(t));
         if (!matchesAll) continue;
