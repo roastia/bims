@@ -1158,6 +1158,9 @@ const Crud = {
   },
 
   async receiveStock(state, storeId, req) {
+    // 書誌マスタの本体価格は「初回登録時の参考価格」として扱う(既にあれば上書きしない)。
+    // 実際にその入荷で扱う本体価格は、下記の通りロット自身にも保存し、
+    // 同じISBNでも入荷ごとに異なる価格を記録・表示できるようにする。
     await this.getOrCreateBook(state, req.isbn, {
       title: req.title || "", author: req.author || "", publisher: req.publisher || "", price: req.price,
     });
@@ -1166,6 +1169,7 @@ const Crud = {
       storeId, isbn: req.isbn, wholesalerId: req.wholesalerId || null,
       purchaseType: req.purchaseType, quantity: req.quantity, initialQuantity: req.quantity,
       unitCost: req.unitCost || 0,
+      price: req.price || 0,
       receivedDate: req.receivedDate || todayStr(),
       consignmentDeadline: req.purchaseType === "consignment" ? (req.consignmentDeadline || null) : null,
       location: req.location === "warehouse" ? "warehouse" : "floor",
@@ -1226,7 +1230,7 @@ const Crud = {
           id: l.id, isbn: l.isbn, storeId: l.storeId, storeName: st ? st.name : null,
           wholesalerId: l.wholesalerId, wholesalerName: w ? w.name : null,
           purchaseType: l.purchaseType, quantity: l.quantity, initialQuantity: l.initialQuantity,
-          unitCost: l.unitCost, receivedDate: l.receivedDate, consignmentDeadline: l.consignmentDeadline,
+          unitCost: l.unitCost, price: l.price || 0, receivedDate: l.receivedDate, consignmentDeadline: l.consignmentDeadline,
           location: l.location || "floor",
           status: l.status, note: l.note,
         };
@@ -1623,16 +1627,18 @@ const Crud = {
         const locationRaw = (row.location || row.保管場所 || "").trim();
         const location = (locationRaw === "warehouse" || locationRaw === "倉庫") ? "warehouse" : "floor";
 
-        await this.getOrCreateBook(state, isbn, {
+        const book = await this.getOrCreateBook(state, isbn, {
           title: (row.title || row.書名 || "").trim(),
           author: (row.author || row.著者 || "").trim(),
           publisher: (row.publisher || row.出版社 || "").trim(),
           price,
         }, false);
+        // CSVに価格の指定が無い行は書誌マスタの参考価格を使う(同じISBNでも行ごとに価格を変えられる)
+        const lotPrice = price !== null ? price : (book.price || 0);
 
         state.stockLots.push({
           id: state.nextId.stockLot++, storeId, isbn, wholesalerId, purchaseType,
-          quantity, initialQuantity: quantity, unitCost, receivedDate, consignmentDeadline, location,
+          quantity, initialQuantity: quantity, unitCost, price: lotPrice, receivedDate, consignmentDeadline, location,
           status: "active", source: "csv_import", note: "",
         });
         success++;
@@ -1727,6 +1733,15 @@ function repairState(state) {
       repaired = true;
     }
   });
+  // 本体価格をロット単位で管理する機能の追加に伴い、旧データ(price未設定のロット)には
+  // その時点の書誌マスタの本体価格を参考値として補完する
+  state.stockLots.forEach((l) => {
+    if (l.price === undefined || l.price === null) {
+      const book = state.books[l.isbn];
+      l.price = (book && book.price) || 0;
+      repaired = true;
+    }
+  });
   fixCounter("sale", state.sales);
   fixCounter("returnRec", state.returns);
   fixCounter("stocktake", state.stocktakeEntries);
@@ -1773,7 +1788,7 @@ function mapLot(l) {
     id: l.id, isbn: l.isbn, store_id: l.storeId, store_name: l.storeName,
     wholesaler_id: l.wholesalerId, wholesaler_name: l.wholesalerName,
     purchase_type: l.purchaseType, quantity: l.quantity, initial_quantity: l.initialQuantity,
-    unit_cost: l.unitCost, received_date: l.receivedDate, consignment_deadline: l.consignmentDeadline,
+    unit_cost: l.unitCost, price: l.price || 0, received_date: l.receivedDate, consignment_deadline: l.consignmentDeadline,
     location: l.location || "floor",
     status: l.status, note: l.note,
   };
@@ -3177,7 +3192,15 @@ const PageStock = {
     const tagsText = item.tags.length ? item.tags.join(", ") : "-";
     const wholesalerNames = [...new Set(item.lots.map((l) => l.wholesaler_name).filter(Boolean))];
     const wholesalerText = wholesalerNames.length ? wholesalerNames.join("、") : "-";
-    const priceText = item.price ? Util.fmtYen(item.price) : "-";
+    // 同じ書籍でもロットごとに本体価格が異なる場合があるため、価格がばらけていれば範囲表示にする
+    const lotPrices = [...new Set(item.lots.map((l) => l.price).filter((p) => p))];
+    let priceText;
+    if (lotPrices.length > 1) {
+      priceText = `${Util.fmtYen(Math.min(...lotPrices))}〜${Util.fmtYen(Math.max(...lotPrices))}`;
+    } else {
+      const singlePrice = lotPrices.length === 1 ? lotPrices[0] : item.price;
+      priceText = singlePrice ? Util.fmtYen(singlePrice) : "-";
+    }
     const storeText = (item.store_names && item.store_names.length) ? item.store_names.join("、") : "-";
 
     return `
@@ -3217,6 +3240,7 @@ const PageStock = {
             <td><span class="${Util.locationBadgeClass(lot.location)}">${Util.locationLabel(lot.location)}</span></td>
             <td>${Util.escapeHtml(lot.wholesaler_name || "-")}</td>
             <td>${lot.quantity}</td>
+            <td>${lot.price ? Util.fmtYen(lot.price) : "-"}</td>
             <td>${Util.fmtDate(lot.received_date)}</td>
             <td>${lot.consignment_deadline ? Util.fmtDate(lot.consignment_deadline) : "-"}</td>
             <td>${Util.escapeHtml(lot.note || "")}</td>
@@ -3290,8 +3314,8 @@ const PageStock = {
               <button class="small" id="tagadd-${secId}">追加</button>
             </div>
             <table class="detail-lot-table">
-              <thead><tr><th>入荷形態</th><th>保管場所</th><th>卸会社</th><th>数量</th><th>入荷日</th><th>返品期限</th><th>備考</th></tr></thead>
-              <tbody>${lotRows || '<tr><td colspan="7" class="empty-msg">在庫ロットがありません</td></tr>'}</tbody>
+              <thead><tr><th>入荷形態</th><th>保管場所</th><th>卸会社</th><th>数量</th><th>本体価格(税別)</th><th>入荷日</th><th>返品期限</th><th>備考</th></tr></thead>
+              <tbody>${lotRows || '<tr><td colspan="8" class="empty-msg">在庫ロットがありません</td></tr>'}</tbody>
             </table>
             ${hasMoveOptions ? `
               <button class="tiny-link detail-move-toggle" id="move-toggle-${secId}">▸ 在庫を移動する</button>
