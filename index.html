@@ -1828,6 +1828,82 @@ const Util = {
   },
 };
 
+// ============================================================
+// ページネーション共通ヘルパー
+// 各ページ(ダッシュボード・売上履歴・返品管理・棚卸など)の一覧テーブルで
+// 「表示件数」セレクト(20/50/100/200/すべて)とページ送りを共通化するためのもの。
+// 選択した表示件数は localStorage に保存され、次回以降も引き継がれる。
+// ============================================================
+const Pagination = {
+  sizeOptions: [20, 50, 100, 200],
+
+  loadPageSize(key, defaultSize) {
+    defaultSize = defaultSize || 50;
+    const stored = localStorage.getItem(key);
+    if (stored === "all") return "all";
+    const n = parseInt(stored || String(defaultSize), 10);
+    return this.sizeOptions.includes(n) ? n : defaultSize;
+  },
+
+  // items配列とページ状態(state: {pageSize, currentPage})から、表示対象の抜き出しと表示範囲情報を返す
+  slice(items, state) {
+    const total = items.length;
+    const totalPages = state.pageSize === "all" ? 1 : Math.max(1, Math.ceil(total / state.pageSize));
+    if (state.currentPage > totalPages) state.currentPage = totalPages;
+    if (state.currentPage < 1) state.currentPage = 1;
+    const startIdx = state.pageSize === "all" ? 0 : (state.currentPage - 1) * state.pageSize;
+    const endIdx = state.pageSize === "all" ? total : Math.min(startIdx + state.pageSize, total);
+    return { pageItems: items.slice(startIdx, endIdx), total, totalPages, startIdx, endIdx };
+  },
+
+  // 「表示件数」セレクトのHTML
+  pageSizeSelectHtml(idPrefix, pageSize) {
+    return `
+      <label class="stock-pagesize">表示件数
+        <select id="${idPrefix}-page-size">
+          ${this.sizeOptions.map((n) => `<option value="${n}" ${pageSize === n ? "selected" : ""}>${n}件</option>`).join("")}
+          <option value="all" ${pageSize === "all" ? "selected" : ""}>すべて</option>
+        </select>
+      </label>
+    `;
+  },
+
+  // 件数表示("N件中 X-Y件を表示")のHTML(pタグ中身のみ)
+  countLabel(total, startIdx, endIdx) {
+    return `${total}件中 ${total ? startIdx + 1 : 0}-${endIdx}件を表示`;
+  },
+
+  // ページ送りボタンのHTML(1ページしかない場合は空文字)
+  controlsHtml(idPrefix, currentPage, totalPages) {
+    if (totalPages <= 1) return "";
+    return `
+      <div class="stock-pagination">
+        <button class="small secondary" id="${idPrefix}-page-prev" ${currentPage <= 1 ? "disabled" : ""}>◀ 前へ</button>
+        <span class="stock-pagination-label">${currentPage} / ${totalPages} ページ</span>
+        <button class="small secondary" id="${idPrefix}-page-next" ${currentPage >= totalPages ? "disabled" : ""}>次へ ▶</button>
+      </div>
+    `;
+  },
+
+  // セレクト・前へ/次へボタンにイベントを配線する
+  // state: {pageSize, currentPage} を持つオブジェクト、storageKeyはlocalStorageキー、onChangeは再描画コールバック
+  wire(idPrefix, state, storageKey, onChange) {
+    const sel = document.getElementById(`${idPrefix}-page-size`);
+    if (sel) {
+      sel.onchange = (e) => {
+        state.pageSize = e.target.value === "all" ? "all" : parseInt(e.target.value, 10);
+        localStorage.setItem(storageKey, String(state.pageSize));
+        state.currentPage = 1;
+        onChange();
+      };
+    }
+    const prevBtn = document.getElementById(`${idPrefix}-page-prev`);
+    if (prevBtn) prevBtn.onclick = () => { state.currentPage--; onChange(); };
+    const nextBtn = document.getElementById(`${idPrefix}-page-next`);
+    if (nextBtn) nextBtn.onclick = () => { state.currentPage++; onChange(); };
+  },
+};
+
 // 店舗の状態管理
 // (画面上部の店舗切替プルダウンは廃止し、全店舗のデータを横断して表示する方針に変更。
 //  ただし入荷登録・棚卸・返品管理など「対象店舗」を選ぶ必要がある画面のために、
@@ -1872,6 +1948,9 @@ const StoreState = {
 };
 
 const PageDashboard = {
+  consignmentPage: { pageSize: Pagination.loadPageSize("dash_consignment_page_size", 20), currentPage: 1 },
+  zeroStockPage: { pageSize: Pagination.loadPageSize("dash_zerostock_page_size", 20), currentPage: 1 },
+
   async render(root) {
     root.innerHTML = `<p class="loading">読み込み中...</p>`;
     let data, stockItems, salesData;
@@ -1964,8 +2043,9 @@ const PageDashboard = {
       value: stockItems.filter((it) => it.price && it.price >= b.min && it.price <= b.max).length,
     }));
 
-    const consignmentRows = data.consignment_alerts.length
-      ? data.consignment_alerts.map((a) => `
+    const consignmentSlice = Pagination.slice(data.consignment_alerts, this.consignmentPage);
+    const consignmentRows = consignmentSlice.pageItems.length
+      ? consignmentSlice.pageItems.map((a) => `
         <tr>
           <td>${Util.escapeHtml(a.title)}</td>
           <td>${Util.escapeHtml(a.store_name || "-")}</td>
@@ -1988,8 +2068,9 @@ const PageDashboard = {
         </tr>`).join("")
       : `<tr><td colspan="4" class="empty-msg">店舗が登録されていません</td></tr>`;
 
-    const zeroStockRows = data.zero_stock.length
-      ? data.zero_stock.slice(0, 30).map((z) => `<tr><td>${Util.escapeHtml(z.title || z.isbn)}</td><td>${Util.escapeHtml(z.isbn)}</td></tr>`).join("")
+    const zeroStockSlice = Pagination.slice(data.zero_stock, this.zeroStockPage);
+    const zeroStockRows = zeroStockSlice.pageItems.length
+      ? zeroStockSlice.pageItems.map((z) => `<tr><td>${Util.escapeHtml(z.title || z.isbn)}</td><td>${Util.escapeHtml(z.isbn)}</td></tr>`).join("")
       : `<tr><td colspan="2" class="empty-msg">在庫切れの書籍はありません</td></tr>`;
 
     const bestSellerRows = data.best_sellers.length
@@ -2025,19 +2106,29 @@ const PageDashboard = {
 
       <div class="card">
         <h2 style="margin-top:0">委託返品期限アラート(14日以内 / 超過含む)</h2>
+        <div class="stock-list-toolbar">
+          <p class="stock-count">${Pagination.countLabel(consignmentSlice.total, consignmentSlice.startIdx, consignmentSlice.endIdx)}</p>
+          ${Pagination.pageSizeSelectHtml("dash-consignment", this.consignmentPage.pageSize)}
+        </div>
         <table>
           <thead><tr><th>書名</th><th>店舗</th><th>卸会社</th><th>数量</th><th>返品期限</th><th>状態</th></tr></thead>
           <tbody>${consignmentRows}</tbody>
         </table>
+        ${Pagination.controlsHtml("dash-consignment", this.consignmentPage.currentPage, consignmentSlice.totalPages)}
       </div>
 
       <div class="grid-2">
         <div class="card">
-          <h2 style="margin-top:0">在庫0の書籍(上位30件)</h2>
+          <h2 style="margin-top:0">在庫0の書籍</h2>
+          <div class="stock-list-toolbar">
+            <p class="stock-count">${Pagination.countLabel(zeroStockSlice.total, zeroStockSlice.startIdx, zeroStockSlice.endIdx)}</p>
+            ${Pagination.pageSizeSelectHtml("dash-zerostock", this.zeroStockPage.pageSize)}
+          </div>
           <table>
             <thead><tr><th>書名</th><th>ISBN</th></tr></thead>
             <tbody>${zeroStockRows}</tbody>
           </table>
+          ${Pagination.controlsHtml("dash-zerostock", this.zeroStockPage.currentPage, zeroStockSlice.totalPages)}
         </div>
         <div class="card">
           <h2 style="margin-top:0">売れ筋ランキング(直近30日)</h2>
@@ -2124,6 +2215,9 @@ const PageDashboard = {
         <button class="danger" id="import-btn">インポートする(現在のデータを上書き)</button>
       </div>
     `;
+
+    Pagination.wire("dash-consignment", this.consignmentPage, "dash_consignment_page_size", () => this.render(root));
+    Pagination.wire("dash-zerostock", this.zeroStockPage, "dash_zerostock_page_size", () => this.render(root));
 
     document.getElementById("export-btn").onclick = () => {
       const json = JSON.stringify(AppState.state, null, 2);
@@ -3104,6 +3198,8 @@ const PageImport = {
 };
 
 const PageSales = {
+  salesPage: { pageSize: Pagination.loadPageSize("sales_page_size", 50), currentPage: 1 },
+
   async render(root) {
     root.innerHTML = `<p class="loading">読み込み中...</p>`;
     let rows;
@@ -3114,8 +3210,9 @@ const PageSales = {
       return;
     }
 
-    const body = rows.length
-      ? rows.map((r) => `
+    const slice = Pagination.slice(rows, this.salesPage);
+    const body = slice.pageItems.length
+      ? slice.pageItems.map((r) => `
         <tr>
           <td>${Util.fmtDate(r.sale_date)}</td>
           <td>${Util.escapeHtml(r.title || r.isbn)}</td>
@@ -3130,18 +3227,27 @@ const PageSales = {
       <h1>売上履歴</h1>
       <p class="subtitle">全店舗の直近90日の販売履歴(POS取込データ)</p>
       <div class="card">
+        <div class="stock-list-toolbar">
+          <p class="stock-count">${Pagination.countLabel(slice.total, slice.startIdx, slice.endIdx)}</p>
+          ${Pagination.pageSizeSelectHtml("sales", this.salesPage.pageSize)}
+        </div>
         <table>
           <thead><tr><th>販売日</th><th>書名</th><th>店舗</th><th>数量</th><th>単価</th><th>備考</th></tr></thead>
           <tbody>${body}</tbody>
         </table>
+        ${Pagination.controlsHtml("sales", this.salesPage.currentPage, slice.totalPages)}
       </div>
     `;
+
+    Pagination.wire("sales", this.salesPage, "sales_page_size", () => this.render(root));
   },
 };
 
 const PageReturns = {
   activeTab: "candidates",
   selectedStoreId: null,
+  candidatesPage: { pageSize: Pagination.loadPageSize("returns_candidates_page_size", 50), currentPage: 1 },
+  historyPage: { pageSize: Pagination.loadPageSize("returns_history_page_size", 50), currentPage: 1 },
 
   async render(root, params) {
     if (params && params.tab) this.activeTab = params.tab;
@@ -3183,7 +3289,7 @@ const PageReturns = {
     if (this.activeTab === "candidates") {
       await this.renderCandidates(content, storeId, root);
     } else {
-      await this.renderHistory(content, storeId);
+      await this.renderHistory(content, storeId, root);
     }
   },
 
@@ -3201,12 +3307,18 @@ const PageReturns = {
       return;
     }
 
+    const slice = Pagination.slice(candidates, this.candidatesPage);
+
     content.innerHTML = `
       <div class="card">
+        <div class="stock-list-toolbar">
+          <p class="stock-count">${Pagination.countLabel(slice.total, slice.startIdx, slice.endIdx)}</p>
+          ${Pagination.pageSizeSelectHtml("ret-cand", this.candidatesPage.pageSize)}
+        </div>
         <table>
           <thead><tr><th>書名</th><th>保管場所</th><th>卸会社</th><th>在庫数</th><th>返品期限</th><th>状態</th><th>返品数量</th><th></th></tr></thead>
           <tbody>
-            ${candidates.map((c) => `
+            ${slice.pageItems.map((c) => `
               <tr>
                 <td>${Util.escapeHtml(c.title || c.isbn)}</td>
                 <td><span class="${Util.locationBadgeClass(c.location)}">${Util.locationLabel(c.location)}</span></td>
@@ -3225,10 +3337,13 @@ const PageReturns = {
             `).join("")}
           </tbody>
         </table>
+        ${Pagination.controlsHtml("ret-cand", this.candidatesPage.currentPage, slice.totalPages)}
       </div>
     `;
 
-    candidates.forEach((c) => {
+    Pagination.wire("ret-cand", this.candidatesPage, "returns_candidates_page_size", () => this.render(root));
+
+    slice.pageItems.forEach((c) => {
       document.getElementById(`ret-btn-${c.lot_id}`).onclick = async () => {
         const qty = parseInt(document.getElementById(`ret-qty-${c.lot_id}`).value || "0", 10);
         if (!qty || qty <= 0) { Util.toast("数量を入力してください", "warning"); return; }
@@ -3243,7 +3358,7 @@ const PageReturns = {
     });
   },
 
-  async renderHistory(content, storeId) {
+  async renderHistory(content, storeId, root) {
     let rows;
     try {
       rows = await Api.get(`/api/stores/${storeId}/returns/history`);
@@ -3251,12 +3366,17 @@ const PageReturns = {
       content.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
       return;
     }
+    const slice = Pagination.slice(rows, this.historyPage);
     content.innerHTML = `
       <div class="card">
+        <div class="stock-list-toolbar">
+          <p class="stock-count">${Pagination.countLabel(slice.total, slice.startIdx, slice.endIdx)}</p>
+          ${Pagination.pageSizeSelectHtml("ret-hist", this.historyPage.pageSize)}
+        </div>
         <table>
           <thead><tr><th>返品日</th><th>書名</th><th>卸会社</th><th>数量</th><th>備考</th></tr></thead>
           <tbody>
-            ${rows.length ? rows.map((r) => `
+            ${slice.pageItems.length ? slice.pageItems.map((r) => `
               <tr>
                 <td>${Util.fmtDate(r.return_date)}</td>
                 <td>${Util.escapeHtml(r.title || r.isbn)}</td>
@@ -3267,13 +3387,17 @@ const PageReturns = {
             `).join("") : '<tr><td colspan="5" class="empty-msg">返品履歴はありません</td></tr>'}
           </tbody>
         </table>
+        ${Pagination.controlsHtml("ret-hist", this.historyPage.currentPage, slice.totalPages)}
       </div>
     `;
+    Pagination.wire("ret-hist", this.historyPage, "returns_history_page_size", () => this.render(root));
   },
 };
 
 const PageStocktake = {
   selectedStoreId: null,
+  mainPage: { pageSize: Pagination.loadPageSize("stocktake_main_page_size", 50), currentPage: 1 },
+  historyPage: { pageSize: Pagination.loadPageSize("stocktake_history_page_size", 50), currentPage: 1 },
 
   async render(root) {
     root.innerHTML = `<p class="loading">読み込み中...</p>`;
@@ -3293,6 +3417,8 @@ const PageStocktake = {
       .map((s) => `<option value="${s.id}" ${s.id === storeId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`)
       .join("");
 
+    const mainSlice = Pagination.slice(rows, this.mainPage);
+
     root.innerHTML = `
       <h1>棚卸(実地在庫確認)</h1>
       <p class="subtitle">選択した店舗のシステム上在庫と実地カウント数を比較し、差異を登録します。差異は卸会社別の内訳を変えずに「調整」として反映されます。</p>
@@ -3305,10 +3431,14 @@ const PageStocktake = {
       </div>
 
       <div class="card">
+        <div class="stock-list-toolbar">
+          <p class="stock-count">${Pagination.countLabel(mainSlice.total, mainSlice.startIdx, mainSlice.endIdx)}</p>
+          ${Pagination.pageSizeSelectHtml("st-main", this.mainPage.pageSize)}
+        </div>
         <table>
           <thead><tr><th>書名</th><th>ISBN</th><th>システム在庫</th><th>実地カウント数</th><th></th></tr></thead>
           <tbody>
-            ${rows.length ? rows.map((r) => `
+            ${mainSlice.pageItems.length ? mainSlice.pageItems.map((r) => `
               <tr>
                 <td>${Util.escapeHtml(r.title || r.isbn)}</td>
                 <td>${Util.escapeHtml(r.isbn)}</td>
@@ -3319,6 +3449,7 @@ const PageStocktake = {
             `).join("") : '<tr><td colspan="5" class="empty-msg">在庫データがありません</td></tr>'}
           </tbody>
         </table>
+        ${Pagination.controlsHtml("st-main", this.mainPage.currentPage, mainSlice.totalPages)}
       </div>
 
       <div class="card">
@@ -3333,7 +3464,9 @@ const PageStocktake = {
       this.render(root);
     });
 
-    rows.forEach((r) => {
+    Pagination.wire("st-main", this.mainPage, "stocktake_main_page_size", () => this.render(root));
+
+    mainSlice.pageItems.forEach((r) => {
       const id = cssId(r.isbn);
       document.getElementById(`st-btn-${id}`).onclick = async () => {
         const counted = parseInt(document.getElementById(`st-count-${id}`).value || "0", 10);
@@ -3353,12 +3486,17 @@ const PageStocktake = {
 
     try {
       const history = await Api.get(`/api/stores/${storeId}/stocktake/history`);
+      const histSlice = Pagination.slice(history, this.historyPage);
       const histEl = document.getElementById("stocktake-history");
       histEl.innerHTML = `
+        <div class="stock-list-toolbar">
+          <p class="stock-count">${Pagination.countLabel(histSlice.total, histSlice.startIdx, histSlice.endIdx)}</p>
+          ${Pagination.pageSizeSelectHtml("st-hist", this.historyPage.pageSize)}
+        </div>
         <table>
           <thead><tr><th>実施日</th><th>書名</th><th>システム在庫</th><th>実地カウント</th><th>差異</th></tr></thead>
           <tbody>
-            ${history.length ? history.map((h) => `
+            ${histSlice.pageItems.length ? histSlice.pageItems.map((h) => `
               <tr>
                 <td>${Util.fmtDate(h.taken_date)}</td>
                 <td>${Util.escapeHtml(h.title || h.isbn)}</td>
@@ -3369,7 +3507,9 @@ const PageStocktake = {
             `).join("") : '<tr><td colspan="5" class="empty-msg">棚卸履歴はありません</td></tr>'}
           </tbody>
         </table>
+        ${Pagination.controlsHtml("st-hist", this.historyPage.currentPage, histSlice.totalPages)}
       `;
+      Pagination.wire("st-hist", this.historyPage, "stocktake_history_page_size", () => this.render(root));
     } catch (e) {
       document.getElementById("stocktake-history").innerHTML = `<p class="error-msg">履歴の読み込みに失敗しました</p>`;
     }
