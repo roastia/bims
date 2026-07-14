@@ -1424,10 +1424,12 @@ const Crud = {
     };
   },
 
-  getDashboardAll(state, alertDays = 14, bestSellerDays = 30, bestSellerLimit = 20) {
+  getDashboardAll(state, alertDays = 14, bestSellerDays = 30, bestSellerLimit = 20, lowStockThreshold = 0) {
     const storesById = new Map(state.stores.map((s) => [s.id, s]));
     const wholesalersById = new Map(state.wholesalers.map((w) => [w.id, w]));
     const today = todayStr();
+    // 「在庫が少ない書籍」の基準冊数(この冊数以下になったものを一覧に出す。0を指定すれば従来通り売り切れのみ)
+    const threshold = Number.isFinite(lowStockThreshold) ? lowStockThreshold : 0;
 
     // 店舗別の内訳(在庫あり点数・合計冊数・返品アラート件数)は
     // 全ロットを一度だけ店舗別にグルーピングして集計する。
@@ -1440,20 +1442,20 @@ const Crud = {
       if (!arr) { arr = []; lotsByStore.set(l.storeId, arr); }
       arr.push(l);
     });
-    // 「在庫0の書籍」は店舗ごとに判定する。
+    // 「在庫が少ない書籍」は店舗ごとに判定する。
     // (以前は全店舗の合計数量で判定していたため、ある店舗では売り切れていても
     //  別の店舗に在庫があると合計が0にならず、一覧に出てこない不具合があった。
-    //  実務上は「自店で切れている本」を知りたいので、店舗×書籍単位でチェックする)
-    const zeroStock = [];
+    //  実務上は「自店で少なくなっている本」を知りたいので、店舗×書籍単位でチェックする)
+    const lowStock = [];
     const byStore = state.stores.map((s) => {
       const lots = lotsByStore.get(s.id) || [];
       const byIsbnQty = {};
       lots.forEach((l) => { byIsbnQty[l.isbn] = (byIsbnQty[l.isbn] || 0) + l.quantity; });
       const qtysInStock = Object.values(byIsbnQty).filter((q) => q > 0);
       Object.keys(byIsbnQty).forEach((isbn) => {
-        if (byIsbnQty[isbn] <= 0) {
+        if (byIsbnQty[isbn] <= threshold) {
           const book = state.books[isbn];
-          zeroStock.push({ isbn, title: book ? book.title : "", storeId: s.id, storeName: s.name });
+          lowStock.push({ isbn, title: book ? book.title : "", storeId: s.id, storeName: s.name, quantity: byIsbnQty[isbn] });
         }
       });
       const consignmentAlertCount = lots.filter((l) => l.purchaseType === "consignment" && l.quantity > 0 && l.status === "active" && l.consignmentDeadline
@@ -1465,7 +1467,8 @@ const Crud = {
         consignmentAlertCount,
       };
     });
-    zeroStock.sort((a, b) => (a.title || a.isbn).localeCompare(b.title || b.isbn, "ja")
+    lowStock.sort((a, b) => a.quantity - b.quantity
+      || (a.title || a.isbn).localeCompare(b.title || b.isbn, "ja")
       || String(a.storeName || "").localeCompare(String(b.storeName || ""), "ja"));
 
     // 総在庫点数・総在庫冊数(見出し数値)は全店舗の合計を示すものなので、こちらは従来通り全ロットから再集計する
@@ -1501,7 +1504,7 @@ const Crud = {
       .slice(0, bestSellerLimit);
 
     return {
-      zeroStock, consignmentAlerts, bestSellers,
+      lowStock, consignmentAlerts, bestSellers,
       totalTitlesInStock: Object.values(byIsbnQtyAll).filter((q) => q > 0).length,
       totalQuantityInStock: Object.values(byIsbnQtyAll).filter((q) => q > 0).reduce((s, q) => s + q, 0),
       byStore,
@@ -1818,7 +1821,7 @@ function mapDashboard(d) {
 }
 function mapDashboardAll(d) {
   return {
-    zero_stock: d.zeroStock.map((z) => ({ isbn: z.isbn, title: z.title, store_id: z.storeId, store_name: z.storeName })),
+    low_stock: d.lowStock.map((z) => ({ isbn: z.isbn, title: z.title, store_id: z.storeId, store_name: z.storeName, quantity: z.quantity })),
     consignment_alerts: d.consignmentAlerts.map((a) => ({
       lot_id: a.lotId, isbn: a.isbn, title: a.title, wholesaler_name: a.wholesalerName, store_name: a.storeName,
       quantity: a.quantity, consignment_deadline: a.consignmentDeadline, days_until_deadline: a.daysUntilDeadline,
@@ -2174,7 +2177,8 @@ const LocalApi = {
       return mapDashboard(Crud.getDashboard(state, storeId));
     }
     if (method === "GET" && rawPath === "/api/dashboard") {
-      return mapDashboardAll(Crud.getDashboardAll(state));
+      const lowStockThreshold = Number(qs.get("low_stock_threshold") || "0");
+      return mapDashboardAll(Crud.getDashboardAll(state, 14, 30, 20, lowStockThreshold));
     }
 
     throw new Error(`未対応のAPIです: ${method} ${rawPath}`);
@@ -2392,13 +2396,17 @@ const StoreState = {
 const PageDashboard = {
   consignmentPage: { pageSize: Pagination.loadPageSize("dash_consignment_page_size", 20), currentPage: 1 },
   zeroStockPage: { pageSize: Pagination.loadPageSize("dash_zerostock_page_size", 20), currentPage: 1 },
+  lowStockThreshold: (() => {
+    const stored = parseInt(localStorage.getItem("dash_lowstock_threshold") || "0", 10);
+    return Number.isFinite(stored) && stored >= 0 ? stored : 0;
+  })(),
 
   async render(root) {
     root.innerHTML = `<p class="loading">読み込み中...</p>`;
     let data, stockItems, salesData;
     try {
       [data, stockItems, salesData] = await Promise.all([
-        Api.get(`/api/dashboard`),
+        Api.get(`/api/dashboard?low_stock_threshold=${this.lowStockThreshold}`),
         Api.get(`/api/stock?q=`),
         Api.get(`/api/sales?days=30`),
       ]);
@@ -2510,10 +2518,10 @@ const PageDashboard = {
         </tr>`).join("")
       : `<tr><td colspan="4" class="empty-msg">店舗が登録されていません</td></tr>`;
 
-    const zeroStockSlice = Pagination.slice(data.zero_stock, this.zeroStockPage);
+    const zeroStockSlice = Pagination.slice(data.low_stock, this.zeroStockPage);
     const zeroStockRows = zeroStockSlice.pageItems.length
-      ? zeroStockSlice.pageItems.map((z) => `<tr><td>${Util.escapeHtml(z.title || z.isbn)}</td><td>${Util.escapeHtml(z.store_name || "")}</td><td>${Util.escapeHtml(z.isbn)}</td></tr>`).join("")
-      : `<tr><td colspan="3" class="empty-msg">在庫切れの書籍はありません</td></tr>`;
+      ? zeroStockSlice.pageItems.map((z) => `<tr><td>${Util.escapeHtml(z.title || z.isbn)}</td><td>${Util.escapeHtml(z.store_name || "")}</td><td class="num">${z.quantity}</td><td>${Util.escapeHtml(z.isbn)}</td></tr>`).join("")
+      : `<tr><td colspan="4" class="empty-msg">該当する書籍はありません</td></tr>`;
 
     const bestSellerRows = data.best_sellers.length
       ? data.best_sellers.map((b, i) => `<tr><td>${i + 1}</td><td>${Util.escapeHtml(b.title || b.isbn)}</td><td>${b.total_sold}</td></tr>`).join("")
@@ -2561,13 +2569,19 @@ const PageDashboard = {
 
       <div class="grid-2">
         <div class="card">
-          <h2 style="margin-top:0">在庫0の書籍</h2>
+          <h2 style="margin-top:0">在庫が少ない書籍</h2>
+          <div class="form-inline" style="margin-bottom:8px;">
+            <div class="form-row" style="max-width:220px;">
+              <label>在庫数がこの冊数以下の書籍を表示(0で売り切れのみ)</label>
+              <input type="number" id="dash-lowstock-threshold" min="0" step="1" value="${this.lowStockThreshold}">
+            </div>
+          </div>
           <div class="stock-list-toolbar">
             <p class="stock-count">${Pagination.countLabel(zeroStockSlice.total, zeroStockSlice.startIdx, zeroStockSlice.endIdx)}</p>
             ${Pagination.pageSizeSelectHtml("dash-zerostock", this.zeroStockPage.pageSize)}
           </div>
           <table>
-            <thead><tr><th>書名</th><th>店舗</th><th>ISBN</th></tr></thead>
+            <thead><tr><th>書名</th><th>店舗</th><th class="num">在庫数</th><th>ISBN</th></tr></thead>
             <tbody>${zeroStockRows}</tbody>
           </table>
           ${Pagination.controlsHtml("dash-zerostock", this.zeroStockPage.currentPage, zeroStockSlice.totalPages)}
@@ -2678,6 +2692,28 @@ const PageDashboard = {
 
     Pagination.wire("dash-consignment", this.consignmentPage, "dash_consignment_page_size", () => this.render(root));
     Pagination.wire("dash-zerostock", this.zeroStockPage, "dash_zerostock_page_size", () => this.render(root));
+
+    const thresholdInput = document.getElementById("dash-lowstock-threshold");
+    if (thresholdInput) {
+      const applyThreshold = () => {
+        const n = parseInt(thresholdInput.value, 10);
+        this.lowStockThreshold = Number.isFinite(n) && n >= 0 ? n : 0;
+        localStorage.setItem("dash_lowstock_threshold", String(this.lowStockThreshold));
+        this.zeroStockPage.currentPage = 1;
+        this.render(root);
+      };
+      let thresholdDebounce = null;
+      thresholdInput.addEventListener("input", () => {
+        clearTimeout(thresholdDebounce);
+        thresholdDebounce = setTimeout(applyThreshold, 400);
+      });
+      thresholdInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          clearTimeout(thresholdDebounce);
+          applyThreshold();
+        }
+      });
+    }
 
     document.getElementById("pw-change-btn").onclick = async () => {
       const current = document.getElementById("pw-change-current").value;
