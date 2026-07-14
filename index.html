@@ -1,0 +1,3081 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>書店在庫管理</title>
+<style>
+:root {
+  --primary: #2c5f8a;
+  --primary-dark: #1e4560;
+  --accent: #d97b3f;
+  --bg: #f5f6f8;
+  --card-bg: #ffffff;
+  --border: #dde1e6;
+  --text: #22282f;
+  --text-muted: #667085;
+  --danger: #c0392b;
+  --success: #2e7d4f;
+  --warning: #b8860b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Hiragino Kaku Gothic ProN", "Meiryo", "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--primary-dark);
+  color: white;
+  padding: 10px 20px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.logo { font-weight: bold; font-size: 1.1em; }
+
+.topnav {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.topnav a {
+  color: #e8eef4;
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 0.92em;
+}
+
+.topnav a:hover, .topnav a.active {
+  background: var(--primary);
+}
+
+.topbar-right { display: flex; align-items: center; gap: 6px; }
+.topbar-right select { padding: 5px 8px; border-radius: 4px; border: none; }
+
+.app-main { padding: 20px; max-width: 1100px; margin: 0 auto; }
+
+h1 { font-size: 1.4em; margin-bottom: 4px; }
+h2 { font-size: 1.15em; margin-top: 28px; }
+.subtitle { color: var(--text-muted); margin-top: 0; margin-bottom: 18px; font-size: 0.9em; }
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+@media (max-width: 800px) {
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+}
+
+table { width: 100%; border-collapse: collapse; font-size: 0.92em; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); }
+th { background: #eef1f5; font-weight: 600; }
+tr:hover td { background: #fafbfc; }
+
+input, select, textarea, button {
+  font-family: inherit;
+  font-size: 0.95em;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+button {
+  background: var(--primary);
+  color: white;
+  border: none;
+  cursor: pointer;
+  padding: 8px 16px;
+}
+button:hover { background: var(--primary-dark); }
+button.secondary { background: #6b7686; }
+button.danger { background: var(--danger); }
+button.small { padding: 4px 9px; font-size: 0.85em; }
+
+.form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.form-row label { font-size: 0.85em; color: var(--text-muted); font-weight: 600; }
+.form-inline { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+
+.barcode-box {
+  background: #fff7ec;
+  border: 1px solid #f0c98a;
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+.barcode-box input { width: 100%; font-size: 1.1em; padding: 10px; }
+.barcode-hint { font-size: 0.8em; color: var(--text-muted); margin-top: 6px; }
+
+.tag-pill {
+  display: inline-block;
+  background: #e4ecf3;
+  color: var(--primary-dark);
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 0.8em;
+  margin: 2px 3px 2px 0;
+}
+.tag-pill button {
+  background: none; color: var(--danger); border: none; padding: 0 0 0 4px;
+  font-size: 0.9em; cursor: pointer;
+}
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.78em; font-weight: 600; }
+.badge-buy { background: #dbe9dd; color: var(--success); }
+.badge-consignment { background: #fbe6d4; color: var(--accent); }
+.badge-adjustment { background: #eee; color: #666; }
+.badge-danger { background: #f8d7da; color: var(--danger); }
+.badge-warning { background: #fff3cd; color: var(--warning); }
+
+.stat-box { text-align: center; }
+.stat-number { font-size: 2em; font-weight: 700; color: var(--primary-dark); }
+.stat-label { color: var(--text-muted); font-size: 0.85em; }
+
+.empty-msg { color: var(--text-muted); padding: 14px 0; font-style: italic; }
+.loading { color: var(--text-muted); }
+.error-msg { color: var(--danger); }
+
+.toast-container {
+  position: fixed; top: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 999;
+}
+.toast {
+  background: #333; color: white; padding: 10px 16px; border-radius: 6px; font-size: 0.9em;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2); max-width: 320px;
+}
+.toast.success { background: var(--success); }
+.toast.error { background: var(--danger); }
+.toast.warning { background: var(--warning); }
+
+.tab-buttons { display: flex; gap: 6px; margin-bottom: 16px; }
+.tab-buttons button.active { background: var(--primary-dark); }
+
+.csv-errors { max-height: 220px; overflow-y: auto; background: #fef8f8; border: 1px solid #f3c6c6; padding: 10px; border-radius: 6px; font-size: 0.85em; }
+.csv-warnings { max-height: 220px; overflow-y: auto; background: #fffbea; border: 1px solid #f0e0a0; padding: 10px; border-radius: 6px; font-size: 0.85em; margin-top: 8px; }
+
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-left">
+    <span class="logo">書店在庫管理</span>
+  </div>
+  <nav class="topnav">
+    <a href="#/dashboard" data-route="/dashboard">ダッシュボード</a>
+    <a href="#/stock" data-route="/stock">在庫一覧</a>
+    <a href="#/receive" data-route="/receive">入荷登録</a>
+    <a href="#/transfer" data-route="/transfer">店舗間移動</a>
+    <a href="#/import" data-route="/import">CSV取込</a>
+    <a href="#/sales" data-route="/sales">売上履歴</a>
+    <a href="#/returns" data-route="/returns">返品管理</a>
+    <a href="#/stocktake" data-route="/stocktake">棚卸</a>
+    <a href="#/masters" data-route="/masters">マスタ管理</a>
+    <a href="#/data" data-route="/data">データ管理</a>
+  </nav>
+  <div class="topbar-right">
+    <label class="store-switcher-label">店舗:</label>
+    <select id="store-switcher"></select>
+  </div>
+</header>
+
+<main id="app" class="app-main">
+  <p class="loading">読み込み中...</p>
+</main>
+
+<div id="toast-container" class="toast-container"></div>
+
+<script>
+// ---- 01_db.js ----
+// ============================================================
+// ローカルデータベース(IndexedDB)
+// アプリ全体の状態を1つのJSONドキュメントとしてIndexedDBに保存する。
+// サーバーを使わず、このMac(このブラウザ)の中だけでデータを完結させる。
+// ============================================================
+const DB_NAME = "bookstore_offline_db";
+const DB_STORE = "app_state";
+const DB_KEY = "main";
+const DB_VERSION = 1;
+
+const Db = {
+  _dbPromise: null,
+
+  open() {
+    if (this._dbPromise) return this._dbPromise;
+    this._dbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(DB_STORE)) {
+          db.createObjectStore(DB_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return this._dbPromise;
+  },
+
+  async loadState() {
+    const db = await this.open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, "readonly");
+      const store = tx.objectStore(DB_STORE);
+      const req = store.get(DB_KEY);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  },
+
+  async saveState(state) {
+    const db = await this.open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, "readwrite");
+      const store = tx.objectStore(DB_STORE);
+      const req = store.put(state, DB_KEY);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  },
+};
+
+function defaultState() {
+  return {
+    nextId: {
+      store: 2, wholesaler: 1, tag: 1, bookTag: 1, stockLot: 1,
+      sale: 1, returnRec: 1, stocktake: 1, transfer: 1,
+    },
+    stores: [{ id: 1, name: "本店", note: "" }],
+    wholesalers: [],
+    books: {}, // isbn -> book object
+    tags: [], // {id, name}
+    bookTags: [], // {id, storeId, isbn, tagId}
+    stockLots: [], // {id, storeId, isbn, wholesalerId, purchaseType, quantity, initialQuantity, unitCost, receivedDate, consignmentDeadline, status, source, note}
+    sales: [], // {id, storeId, isbn, lotId, quantity, saleDate, unitPrice, importBatch, oversold}
+    returns: [], // {id, storeId, lotId, isbn, wholesalerId, quantity, returnDate, note}
+    stocktakeEntries: [], // {id, storeId, isbn, systemQty, countedQty, diff, takenDate, note}
+    transfers: [], // {id, isbn, fromStoreId, toStoreId, quantity, transferDate, note}
+  };
+}
+
+
+// ---- 02_barcode.js ----
+// ============================================================
+// 書籍JANコード(2段バーコード)の解析
+// 上段: ISBNをEAN-13化したコード(978/979から始まる13桁)
+// 下段: 192(または191) + Cコード(図書分類4桁) + 本体価格(5桁) + チェックデジット
+// ============================================================
+const SALES_TARGET = {
+  "0": "一般", "1": "教養", "2": "実用", "3": "専門", "4": "検定",
+  "5": "婦人", "6": "学参I(小中学生)", "7": "学参II(高校生)", "8": "児童", "9": "雑誌扱い書籍",
+};
+const PUBLICATION_FORM = {
+  "0": "単行本", "1": "文庫", "2": "新書", "3": "全集・双書", "4": "ムック・その他",
+  "5": "事・辞典", "6": "図鑑", "7": "絵本", "8": "磁性媒体・電子媒体", "9": "コミック",
+};
+const CONTENT_MAJOR = {
+  "0": "総記", "1": "哲学・心理学・宗教", "2": "歴史・地理", "3": "社会科学", "4": "自然科学",
+  "5": "工学・工業・科学技術", "6": "産業", "7": "芸術・生活", "8": "語学", "9": "文学",
+};
+
+const Barcode = {
+  normalizeCode(raw) {
+    return String(raw || "").replace(/[^0-9]/g, "").trim();
+  },
+
+  ean13ChecksumValid(code13) {
+    if (!code13 || code13.length !== 13 || !/^\d+$/.test(code13)) return false;
+    const digits = code13.split("").map(Number);
+    let total = 0;
+    for (let i = 0; i < 12; i++) total += i % 2 === 0 ? digits[i] : digits[i] * 3;
+    const check = (10 - (total % 10)) % 10;
+    return check === digits[12];
+  },
+
+  isbn10to13(isbn10) {
+    const core = isbn10.slice(0, 9);
+    const base = "978" + core;
+    const digits = base.split("").map(Number);
+    let total = 0;
+    for (let i = 0; i < digits.length; i++) total += i % 2 === 0 ? digits[i] : digits[i] * 3;
+    const check = (10 - (total % 10)) % 10;
+    return base + String(check);
+  },
+
+  classificationTextFromCcode(cCode) {
+    if (!cCode || cCode.length !== 4) return `分類コード:${cCode}`;
+    const target = SALES_TARGET[cCode[0]] || "不明";
+    const form = PUBLICATION_FORM[cCode[1]] || "不明";
+    const major = CONTENT_MAJOR[cCode[2]] || "不明";
+    return `${target}/${form}/${major}(C${cCode})`;
+  },
+
+  identify(raw) {
+    let code = this.normalizeCode(raw);
+    if (code.length === 10) code = this.isbn10to13(code);
+    if (!code || code.length !== 13) return { kind: "unknown", raw };
+
+    if (code.startsWith("978") || code.startsWith("979")) {
+      return { kind: "isbn", isbn13: code };
+    }
+    if ((code.startsWith("191") || code.startsWith("192")) && code.length === 13) {
+      const cCode = code.slice(3, 7);
+      const priceStr = code.slice(7, 12);
+      const price = parseInt(priceStr, 10) || 0;
+      return {
+        kind: "price", cCode, price,
+        classificationText: this.classificationTextFromCcode(cCode),
+      };
+    }
+    return { kind: "unknown", raw };
+  },
+};
+
+
+// ---- 03_openbd.js ----
+// ============================================================
+// openBD (https://openbd.jp) からの書誌情報自動取得(任意・要インターネット接続)
+// 通信できない場合は null を返し、手入力にフォールバックする。
+// ============================================================
+const OpenBd = {
+  async fetchBookInfo(isbn13) {
+    try {
+      const res = await fetch(`https://api.openbd.jp/v1/get?isbn=${encodeURIComponent(isbn13)}`, {
+        method: "GET",
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (!data || !data[0]) return null;
+      const item = data[0];
+      const summary = item.summary || {};
+      const result = {
+        title: summary.title || "",
+        author: summary.author || "",
+        publisher: summary.publisher || "",
+        coverUrl: summary.cover || "",
+      };
+      const price = this._extractPrice(item);
+      if (price) result.price = price;
+      return result;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  _extractPrice(item) {
+    try {
+      const onix = item.onix || {};
+      let prices = ((onix.ProductSupply || {}).SupplyDetail || {}).Price;
+      if (!prices) return null;
+      if (!Array.isArray(prices)) prices = [prices];
+      for (const p of prices) {
+        if (p && p.PriceAmount) {
+          const n = parseFloat(p.PriceAmount);
+          if (!isNaN(n)) return Math.round(n);
+        }
+      }
+    } catch (e) { /* ignore */ }
+    return null;
+  },
+};
+
+
+// ---- 04_csv.js ----
+// ============================================================
+// CSV読み込み/書き出しユーティリティ(外部ライブラリ不使用)
+// ============================================================
+const Csv = {
+  decodeArrayBuffer(buf) {
+    // UTF-8(BOM付き含む) → 失敗したら Shift_JIS(CP932) にフォールバック
+    try {
+      const utf8 = new TextDecoder("utf-8", { fatal: true }).decode(buf);
+      return utf8.replace(/^﻿/, "");
+    } catch (e) { /* fall through */ }
+    try {
+      return new TextDecoder("shift_jis").decode(buf);
+    } catch (e) { /* fall through */ }
+    return new TextDecoder("utf-8").decode(buf);
+  },
+
+  // シンプルなCSVパーサ(ダブルクォート・カンマ・改行(CRLF/LF)に対応)
+  parse(text) {
+    const rows = [];
+    let row = [];
+    let field = "";
+    let inQuotes = false;
+    const pushField = () => { row.push(field); field = ""; };
+    const pushRow = () => { rows.push(row); row = []; };
+
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQuotes) {
+        if (c === '"') {
+          if (text[i + 1] === '"') { field += '"'; i++; }
+          else { inQuotes = false; }
+        } else {
+          field += c;
+        }
+      } else {
+        if (c === '"') inQuotes = true;
+        else if (c === ",") pushField();
+        else if (c === "\r") { /* skip */ }
+        else if (c === "\n") { pushField(); pushRow(); }
+        else field += c;
+      }
+    }
+    if (field.length > 0 || row.length > 0) { pushField(); pushRow(); }
+
+    const filtered = rows.filter((r) => !(r.length === 1 && r[0] === ""));
+    if (filtered.length === 0) return [];
+    const header = filtered[0].map((h) => h.trim());
+    const records = [];
+    for (let i = 1; i < filtered.length; i++) {
+      const r = filtered[i];
+      const obj = {};
+      header.forEach((h, idx) => { obj[h] = (r[idx] !== undefined ? r[idx] : "").trim(); });
+      obj.__line = i + 1;
+      records.push(obj);
+    }
+    return records;
+  },
+
+  downloadText(filename, content, mime) {
+    const blob = new Blob(["﻿" + content], { type: mime || "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  },
+};
+
+
+// ---- 05_crud.js ----
+// ============================================================
+// ビジネスロジック(旧サーバー版 crud.py のJS移植)
+// すべて state(IndexedDBにも保存されるJSオブジェクト)を直接操作する。
+// ============================================================
+const PURCHASE_TYPE_JP = { "買切": "buy", "委託": "consignment", "buy": "buy", "consignment": "consignment" };
+
+function todayStr() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function daysBetween(fromStr, toStr) {
+  const a = new Date(fromStr + "T00:00:00");
+  const b = new Date(toStr + "T00:00:00");
+  return Math.round((b - a) / 86400000);
+}
+
+function parseFlexibleDate(value) {
+  if (!value) return null;
+  const v = String(value).trim();
+  let m = v.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
+  if (m) return `${m[1]}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")}`;
+  m = v.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  return null;
+}
+
+const Crud = {
+  async getOrCreateBook(state, isbn, opts = {}, tryOnlineLookup = true) {
+    const { title = "", author = "", publisher = "", price = null, cCode = "", classificationText = "" } = opts;
+    let book = state.books[isbn];
+    if (book) {
+      let changed = false;
+      if (title && !book.title) { book.title = title; changed = true; }
+      if (author && !book.author) { book.author = author; changed = true; }
+      if (publisher && !book.publisher) { book.publisher = publisher; changed = true; }
+      if (price && !book.price) { book.price = price; changed = true; }
+      if (cCode && !book.cCode) { book.cCode = cCode; book.classificationText = classificationText; changed = true; }
+      return book;
+    }
+
+    let fetched = null;
+    if (tryOnlineLookup && !(title && author && publisher)) {
+      fetched = await OpenBd.fetchBookInfo(isbn);
+    }
+
+    book = {
+      isbn,
+      title: title || (fetched && fetched.title) || "",
+      author: author || (fetched && fetched.author) || "",
+      publisher: publisher || (fetched && fetched.publisher) || "",
+      price: price || (fetched && fetched.price) || 0,
+      cCode: cCode,
+      classificationText: classificationText,
+      coverUrl: (fetched && fetched.coverUrl) || "",
+      isManualEntry: !fetched,
+    };
+    state.books[isbn] = book;
+    return book;
+  },
+
+  async receiveStock(state, storeId, req) {
+    await this.getOrCreateBook(state, req.isbn, {
+      title: req.title || "", author: req.author || "", publisher: req.publisher || "", price: req.price,
+    });
+    const lot = {
+      id: state.nextId.stockLot++,
+      storeId, isbn: req.isbn, wholesalerId: req.wholesalerId || null,
+      purchaseType: req.purchaseType, quantity: req.quantity, initialQuantity: req.quantity,
+      unitCost: req.unitCost || 0,
+      receivedDate: req.receivedDate || todayStr(),
+      consignmentDeadline: req.purchaseType === "consignment" ? (req.consignmentDeadline || null) : null,
+      status: "active", source: "manual", note: req.note || "",
+    };
+    state.stockLots.push(lot);
+    return lot;
+  },
+
+  getStockSummary(state, storeId, query) {
+    const lots = state.stockLots.filter((l) => l.storeId === storeId);
+    const byIsbn = {};
+    lots.forEach((l) => { (byIsbn[l.isbn] = byIsbn[l.isbn] || []).push(l); });
+
+    const results = [];
+    for (const isbn of Object.keys(byIsbn)) {
+      const book = state.books[isbn];
+      if (!book) continue;
+      if (query) {
+        const q = query.toLowerCase();
+        const hay = `${book.isbn} ${book.title} ${book.author} ${book.publisher}`.toLowerCase();
+        if (!hay.includes(q)) continue;
+      }
+      const lotList = byIsbn[isbn];
+      const totalQty = lotList.reduce((s, l) => s + l.quantity, 0);
+      const tagIds = state.bookTags.filter((bt) => bt.storeId === storeId && bt.isbn === isbn).map((bt) => bt.tagId);
+      const tags = state.tags.filter((t) => tagIds.includes(t.id)).map((t) => t.name);
+      const lotOuts = lotList.map((l) => {
+        const w = l.wholesalerId ? state.wholesalers.find((x) => x.id === l.wholesalerId) : null;
+        return {
+          id: l.id, isbn: l.isbn, wholesalerId: l.wholesalerId, wholesalerName: w ? w.name : null,
+          purchaseType: l.purchaseType, quantity: l.quantity, initialQuantity: l.initialQuantity,
+          unitCost: l.unitCost, receivedDate: l.receivedDate, consignmentDeadline: l.consignmentDeadline,
+          status: l.status, note: l.note,
+        };
+      });
+      results.push({
+        isbn, title: book.title, author: book.author, publisher: book.publisher, price: book.price,
+        totalQuantity: totalQty, tags, lots: lotOuts,
+      });
+    }
+    results.sort((a, b) => b.totalQuantity - a.totalQuantity || (a.title || a.isbn).localeCompare(b.title || b.isbn, "ja"));
+    return results;
+  },
+
+  _lotSortKey(lot) {
+    if (lot.purchaseType === "consignment" && lot.consignmentDeadline) return [0, lot.consignmentDeadline];
+    return [1, lot.receivedDate || "9999-99-99"];
+  },
+
+  allocateSale(state, storeId, isbn, quantity, saleDate, unitPrice, importBatch) {
+    let remaining = quantity;
+    saleDate = saleDate || todayStr();
+    const lots = state.stockLots
+      .filter((l) => l.storeId === storeId && l.isbn === isbn && l.quantity > 0 && l.status === "active")
+      .slice()
+      .sort((a, b) => {
+        const ka = this._lotSortKey(a), kb = this._lotSortKey(b);
+        if (ka[0] !== kb[0]) return ka[0] - kb[0];
+        return String(ka[1]).localeCompare(String(kb[1]));
+      });
+
+    const created = [];
+    for (const lot of lots) {
+      if (remaining <= 0) break;
+      const take = Math.min(lot.quantity, remaining);
+      lot.quantity -= take;
+      if (lot.quantity === 0) lot.status = "depleted";
+      const rec = {
+        id: state.nextId.sale++, storeId, isbn, lotId: lot.id, quantity: take,
+        saleDate, unitPrice, importBatch: importBatch || "", oversold: false,
+      };
+      state.sales.push(rec);
+      created.push(rec);
+      remaining -= take;
+    }
+
+    const oversold = remaining > 0;
+    if (oversold) {
+      const rec = {
+        id: state.nextId.sale++, storeId, isbn, lotId: null, quantity: remaining,
+        saleDate, unitPrice, importBatch: importBatch || "", oversold: true,
+      };
+      state.sales.push(rec);
+      created.push(rec);
+    }
+    return { oversold, shortfall: oversold ? remaining : 0, records: created };
+  },
+
+  getReturnCandidates(state, storeId) {
+    const today = todayStr();
+    const lots = state.stockLots
+      .filter((l) => l.storeId === storeId && l.purchaseType === "consignment" && l.quantity > 0 && l.status === "active")
+      .slice()
+      .sort((a, b) => String(a.consignmentDeadline || "9999-99-99").localeCompare(String(b.consignmentDeadline || "9999-99-99")));
+
+    return lots.map((lot) => {
+      const book = state.books[lot.isbn];
+      const w = lot.wholesalerId ? state.wholesalers.find((x) => x.id === lot.wholesalerId) : null;
+      return {
+        lotId: lot.id, isbn: lot.isbn, title: book ? book.title : "",
+        wholesalerId: lot.wholesalerId, wholesalerName: w ? w.name : null,
+        quantity: lot.quantity, receivedDate: lot.receivedDate, consignmentDeadline: lot.consignmentDeadline,
+        daysUntilDeadline: lot.consignmentDeadline ? daysBetween(today, lot.consignmentDeadline) : null,
+      };
+    });
+  },
+
+  processReturn(state, storeId, req) {
+    const lot = state.stockLots.find((l) => l.id === req.lotId);
+    if (!lot || lot.storeId !== storeId) throw new Error("指定された在庫ロットが見つかりません");
+    if (req.quantity > lot.quantity) throw new Error(`返品数量(${req.quantity})がロット残数(${lot.quantity})を超えています`);
+
+    lot.quantity -= req.quantity;
+    if (lot.quantity === 0) lot.status = "returned";
+
+    const rec = {
+      id: state.nextId.returnRec++, storeId, lotId: lot.id, isbn: lot.isbn, wholesalerId: lot.wholesalerId,
+      quantity: req.quantity, returnDate: req.returnDate || todayStr(), note: req.note || "",
+    };
+    state.returns.push(rec);
+    return rec;
+  },
+
+  getStocktakeRows(state, storeId) {
+    const byIsbn = {};
+    state.stockLots.filter((l) => l.storeId === storeId).forEach((l) => {
+      byIsbn[l.isbn] = (byIsbn[l.isbn] || 0) + l.quantity;
+    });
+    const out = Object.keys(byIsbn).map((isbn) => {
+      const book = state.books[isbn];
+      return { isbn, title: book ? book.title : "", systemQty: byIsbn[isbn] };
+    });
+    out.sort((a, b) => (a.title || a.isbn).localeCompare(b.title || b.isbn, "ja"));
+    return out;
+  },
+
+  processStocktake(state, storeId, req) {
+    const systemQty = state.stockLots
+      .filter((l) => l.storeId === storeId && l.isbn === req.isbn)
+      .reduce((s, l) => s + l.quantity, 0);
+    const diff = req.countedQty - systemQty;
+
+    if (diff !== 0) {
+      if (!state.books[req.isbn]) {
+        state.books[req.isbn] = { isbn: req.isbn, title: "", author: "", publisher: "", price: 0, cCode: "", classificationText: "", coverUrl: "", isManualEntry: true };
+      }
+      state.stockLots.push({
+        id: state.nextId.stockLot++, storeId, isbn: req.isbn, wholesalerId: null,
+        purchaseType: "adjustment", quantity: diff, initialQuantity: diff, unitCost: 0,
+        receivedDate: req.takenDate || todayStr(),
+        consignmentDeadline: null,
+        status: diff > 0 ? "active" : "depleted", source: "stocktake",
+        note: `棚卸調整(${diff > 0 ? "過剰" : "不足"}): ${req.note || ""}`.trim(),
+      });
+    }
+
+    state.stocktakeEntries.push({
+      id: state.nextId.stocktake++, storeId, isbn: req.isbn, systemQty, countedQty: req.countedQty,
+      diff, takenDate: req.takenDate || todayStr(), note: req.note || "",
+    });
+
+    return { isbn: req.isbn, systemQty, countedQty: req.countedQty, diff };
+  },
+
+  getDashboard(state, storeId, alertDays = 14, bestSellerDays = 30, bestSellerLimit = 20) {
+    const lots = state.stockLots.filter((l) => l.storeId === storeId);
+    const byIsbnQty = {};
+    lots.forEach((l) => { byIsbnQty[l.isbn] = (byIsbnQty[l.isbn] || 0) + l.quantity; });
+
+    const zeroStock = [];
+    Object.keys(byIsbnQty).forEach((isbn) => {
+      if (byIsbnQty[isbn] <= 0) {
+        const book = state.books[isbn];
+        zeroStock.push({ isbn, title: book ? book.title : "" });
+      }
+    });
+
+    const today = todayStr();
+    const consignmentAlerts = lots
+      .filter((l) => l.purchaseType === "consignment" && l.quantity > 0 && l.status === "active" && l.consignmentDeadline
+        && daysBetween(today, l.consignmentDeadline) <= alertDays)
+      .sort((a, b) => String(a.consignmentDeadline).localeCompare(String(b.consignmentDeadline)))
+      .map((lot) => {
+        const book = state.books[lot.isbn];
+        const w = lot.wholesalerId ? state.wholesalers.find((x) => x.id === lot.wholesalerId) : null;
+        return {
+          lotId: lot.id, isbn: lot.isbn, title: book ? book.title : "", wholesalerName: w ? w.name : null,
+          quantity: lot.quantity, consignmentDeadline: lot.consignmentDeadline,
+          daysUntilDeadline: daysBetween(today, lot.consignmentDeadline),
+        };
+      });
+
+    const sinceDays = bestSellerDays;
+    const sinceDate = new Date();
+    sinceDate.setDate(sinceDate.getDate() - sinceDays);
+    const sinceStr = todayStrFromDate(sinceDate);
+    const salesTotals = {};
+    state.sales.filter((s) => s.storeId === storeId && s.saleDate >= sinceStr).forEach((s) => {
+      salesTotals[s.isbn] = (salesTotals[s.isbn] || 0) + s.quantity;
+    });
+    const bestSellers = Object.keys(salesTotals)
+      .map((isbn) => ({ isbn, title: (state.books[isbn] || {}).title || "", totalSold: salesTotals[isbn] }))
+      .sort((a, b) => b.totalSold - a.totalSold)
+      .slice(0, bestSellerLimit);
+
+    return {
+      zeroStock, consignmentAlerts, bestSellers,
+      totalTitlesInStock: Object.values(byIsbnQty).filter((q) => q > 0).length,
+      totalQuantityInStock: Object.values(byIsbnQty).filter((q) => q > 0).reduce((s, q) => s + q, 0),
+    };
+  },
+
+  transferStock(state, req) {
+    // req: { isbn, fromStoreId, toStoreId, quantity, transferDate, note }
+    if (req.fromStoreId === req.toStoreId) {
+      throw new Error("移動元と移動先には別の店舗を指定してください");
+    }
+    if (!req.quantity || req.quantity <= 0) {
+      throw new Error("数量は1以上を指定してください");
+    }
+    const book = state.books[req.isbn];
+    if (!book) throw new Error("書誌が見つかりません");
+
+    const lots = state.stockLots
+      .filter((l) => l.storeId === req.fromStoreId && l.isbn === req.isbn && l.quantity > 0 && l.status === "active")
+      .slice()
+      .sort((a, b) => {
+        const ka = this._lotSortKey(a), kb = this._lotSortKey(b);
+        if (ka[0] !== kb[0]) return ka[0] - kb[0];
+        return String(ka[1]).localeCompare(String(kb[1]));
+      });
+
+    const availableTotal = lots.reduce((s, l) => s + l.quantity, 0);
+    if (availableTotal < req.quantity) {
+      throw new Error(`移動元の在庫が不足しています(移動元在庫: ${availableTotal}冊, 指定数量: ${req.quantity}冊)`);
+    }
+
+    let remaining = req.quantity;
+    const transferDate = req.transferDate || todayStr();
+    const movedLotPairs = [];
+    for (const lot of lots) {
+      if (remaining <= 0) break;
+      const take = Math.min(lot.quantity, remaining);
+      lot.quantity -= take;
+      if (lot.quantity === 0) lot.status = "depleted";
+
+      const newLot = {
+        id: state.nextId.stockLot++,
+        storeId: req.toStoreId, isbn: req.isbn, wholesalerId: lot.wholesalerId,
+        purchaseType: lot.purchaseType, quantity: take, initialQuantity: take,
+        unitCost: lot.unitCost, receivedDate: lot.receivedDate, consignmentDeadline: lot.consignmentDeadline,
+        status: "active", source: "transfer",
+        note: (lot.note ? lot.note + " / " : "") + "店舗間移動で受入",
+      };
+      state.stockLots.push(newLot);
+      movedLotPairs.push({ fromLotId: lot.id, toLotId: newLot.id, quantity: take });
+      remaining -= take;
+    }
+
+    const rec = {
+      id: state.nextId.transfer++, isbn: req.isbn, fromStoreId: req.fromStoreId, toStoreId: req.toStoreId,
+      quantity: req.quantity, transferDate, note: req.note || "", lotPairs: movedLotPairs,
+    };
+    state.transfers.push(rec);
+    return rec;
+  },
+
+  getTransferHistory(state, storeId) {
+    let list = state.transfers;
+    if (storeId) {
+      list = list.filter((t) => t.fromStoreId === storeId || t.toStoreId === storeId);
+    }
+    return list.slice().sort((a, b) => b.transferDate.localeCompare(a.transferDate));
+  },
+
+  async importPurchaseCsv(state, storeId, text) {
+    const rows = Csv.parse(text);
+    let total = 0, success = 0;
+    const errors = [], warnings = [];
+
+    for (const row of rows) {
+      total++;
+      try {
+        const isbn = (row.isbn || row.ISBN || "").trim();
+        if (!isbn) throw new Error("isbn が空です");
+        const quantity = parseInt(row.quantity || row.数量 || "", 10);
+        if (!quantity || quantity <= 0) throw new Error("quantity は正の整数である必要があります");
+
+        const ptypeRaw = (row.purchase_type || row.仕入形態 || "buy").trim();
+        const purchaseType = PURCHASE_TYPE_JP[ptypeRaw];
+        if (!purchaseType) throw new Error(`purchase_type の値が不正です: ${ptypeRaw}`);
+
+        const wholesalerName = (row.wholesaler_name || row.卸会社 || "").trim();
+        let wholesalerId = null;
+        if (wholesalerName) {
+          let w = state.wholesalers.find((x) => x.name === wholesalerName);
+          if (!w) {
+            w = { id: state.nextId.wholesaler++, name: wholesalerName, contact: "", note: "" };
+            state.wholesalers.push(w);
+            warnings.push(`${row.__line}行目: 卸会社「${wholesalerName}」を新規登録しました`);
+          }
+          wholesalerId = w.id;
+        }
+
+        const unitCost = parseInt(row.unit_cost || row.仕入単価 || "0", 10) || 0;
+        const receivedDate = parseFlexibleDate(row.received_date || row.入荷日) || todayStr();
+        let consignmentDeadline = null;
+        if (purchaseType === "consignment") {
+          consignmentDeadline = parseFlexibleDate(row.consignment_deadline || row.返品期限);
+          if (!consignmentDeadline) warnings.push(`${row.__line}行目: 委託ですが返品期限が未設定です`);
+        }
+        const priceRaw = (row.price || row.価格 || "").trim();
+        const price = priceRaw ? parseInt(priceRaw, 10) : null;
+
+        await this.getOrCreateBook(state, isbn, {
+          title: (row.title || row.書名 || "").trim(),
+          author: (row.author || row.著者 || "").trim(),
+          publisher: (row.publisher || row.出版社 || "").trim(),
+          price,
+        }, false);
+
+        state.stockLots.push({
+          id: state.nextId.stockLot++, storeId, isbn, wholesalerId, purchaseType,
+          quantity, initialQuantity: quantity, unitCost, receivedDate, consignmentDeadline,
+          status: "active", source: "csv_import", note: "",
+        });
+        success++;
+      } catch (e) {
+        errors.push(`${row.__line}行目: ${e.message}`);
+      }
+    }
+    return { totalRows: total, successRows: success, errorRows: errors.length, errors, warnings };
+  },
+
+  importSalesCsv(state, storeId, text, importBatch) {
+    const rows = Csv.parse(text);
+    let total = 0, success = 0;
+    const errors = [], warnings = [];
+
+    for (const row of rows) {
+      total++;
+      try {
+        const isbn = (row.isbn || row.ISBN || "").trim();
+        if (!isbn) throw new Error("isbn が空です");
+        const quantity = parseInt(row.quantity || row.数量 || "", 10);
+        if (!quantity || quantity <= 0) throw new Error("quantity は正の整数である必要があります");
+
+        const book = state.books[isbn];
+        if (!book) throw new Error(`ISBN ${isbn} は書誌未登録のためスキップしました(先に入荷登録が必要です)`);
+
+        const saleDate = parseFlexibleDate(row.sale_date || row.販売日) || todayStr();
+        const unitPriceRaw = (row.unit_price || row.販売単価 || "").trim();
+        const unitPrice = unitPriceRaw ? parseInt(unitPriceRaw, 10) : book.price;
+
+        const result = this.allocateSale(state, storeId, isbn, quantity, saleDate, unitPrice, importBatch);
+        if (result.oversold) {
+          warnings.push(`${row.__line}行目: ISBN ${isbn} は在庫不足のため ${result.shortfall} 冊分がマイナス計上されました`);
+        }
+        success++;
+      } catch (e) {
+        errors.push(`${row.__line}行目: ${e.message}`);
+      }
+    }
+    return { totalRows: total, successRows: success, errorRows: errors.length, errors, warnings };
+  },
+};
+
+function todayStrFromDate(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+
+// ---- 06_localapi.js ----
+// ============================================================
+// LocalApi: 旧サーバー版のREST APIをこのブラウザ内だけで再現するルーター。
+// 画面側(pages/*.js)は以前とまったく同じ Api.get/post/put/del/uploadFile
+// を呼び出すだけでよく、変更の必要がない。
+// ============================================================
+const AppState = { state: null, saving: null };
+
+function repairState(state) {
+  // 過去のバージョンで発生していた「店舗IDの重複」を自動修復する。
+  // (新規追加された店舗が既存店舗と同じIDを取得してしまうバグが過去にあり、
+  //  そのデータがすでに保存されている場合にここで統合する)
+  let repaired = false;
+  const seenStoreIds = new Set();
+  const dedupedStores = state.stores.filter((s) => {
+    if (seenStoreIds.has(s.id)) { repaired = true; return false; }
+    seenStoreIds.add(s.id);
+    return true;
+  });
+  state.stores = dedupedStores;
+  if (state.stores.length === 0) {
+    state.stores = [{ id: 1, name: "本店", note: "" }];
+    repaired = true;
+  }
+
+  // 各コレクションのID採番カウンタが実データと矛盾しないよう補正する
+  // (同様の重複が二度と起きないようにするための保険)
+  const maxId = (arr) => arr.reduce((m, x) => Math.max(m, x.id || 0), 0);
+  const fixCounter = (key, arr) => {
+    const needed = maxId(arr) + 1;
+    if (!state.nextId[key] || state.nextId[key] < needed) {
+      state.nextId[key] = needed;
+      repaired = true;
+    }
+  };
+  fixCounter("store", state.stores);
+  fixCounter("wholesaler", state.wholesalers);
+  fixCounter("tag", state.tags);
+  fixCounter("bookTag", state.bookTags);
+  fixCounter("stockLot", state.stockLots);
+  fixCounter("sale", state.sales);
+  fixCounter("returnRec", state.returns);
+  fixCounter("stocktake", state.stocktakeEntries);
+  if (!state.transfers) { state.transfers = []; repaired = true; }
+  fixCounter("transfer", state.transfers);
+
+  return { state, repaired };
+}
+
+async function ensureStateLoaded() {
+  if (!AppState.state) {
+    const loaded = await Db.loadState();
+    const { state, repaired } = repairState(loaded || defaultState());
+    AppState.state = state;
+    if (!loaded || repaired) await Db.saveState(AppState.state);
+    if (loaded && repaired) {
+      AppState.repairNotice = "保存されていたデータの不整合(重複した店舗など)を自動修復しました";
+    }
+  }
+  return AppState.state;
+}
+
+async function persistState() {
+  await Db.saveState(AppState.state);
+}
+
+// ---- マッピングヘルパー(camelCase の内部表現 -> 画面が期待する snake_case) ----
+function mapBook(b) {
+  if (!b) return null;
+  return {
+    isbn: b.isbn, title: b.title, author: b.author, publisher: b.publisher, price: b.price,
+    c_code: b.cCode, classification_text: b.classificationText, magazine_code: b.magazineCode || "",
+    cover_url: b.coverUrl, is_manual_entry: b.isManualEntry,
+  };
+}
+function mapLot(l) {
+  return {
+    id: l.id, isbn: l.isbn, wholesaler_id: l.wholesalerId, wholesaler_name: l.wholesalerName,
+    purchase_type: l.purchaseType, quantity: l.quantity, initial_quantity: l.initialQuantity,
+    unit_cost: l.unitCost, received_date: l.receivedDate, consignment_deadline: l.consignmentDeadline,
+    status: l.status, note: l.note,
+  };
+}
+function mapStockItem(item) {
+  return {
+    isbn: item.isbn, title: item.title, author: item.author, publisher: item.publisher, price: item.price,
+    total_quantity: item.totalQuantity, tags: item.tags, lots: item.lots.map(mapLot),
+  };
+}
+function mapReturnCandidate(c) {
+  return {
+    lot_id: c.lotId, isbn: c.isbn, title: c.title, wholesaler_id: c.wholesalerId, wholesaler_name: c.wholesalerName,
+    quantity: c.quantity, received_date: c.receivedDate, consignment_deadline: c.consignmentDeadline,
+    days_until_deadline: c.daysUntilDeadline,
+  };
+}
+function mapReturnHistory(r, state) {
+  const book = state.books[r.isbn];
+  const w = r.wholesalerId ? state.wholesalers.find((x) => x.id === r.wholesalerId) : null;
+  return {
+    id: r.id, isbn: r.isbn, title: book ? book.title : "", wholesaler_name: w ? w.name : null,
+    quantity: r.quantity, return_date: r.returnDate, note: r.note,
+  };
+}
+function mapDashboard(d) {
+  return {
+    zero_stock: d.zeroStock,
+    consignment_alerts: d.consignmentAlerts.map((a) => ({
+      lot_id: a.lotId, isbn: a.isbn, title: a.title, wholesaler_name: a.wholesalerName,
+      quantity: a.quantity, consignment_deadline: a.consignmentDeadline, days_until_deadline: a.daysUntilDeadline,
+    })),
+    best_sellers: d.bestSellers.map((b) => ({ isbn: b.isbn, title: b.title, total_sold: b.totalSold })),
+    total_titles_in_stock: d.totalTitlesInStock,
+    total_quantity_in_stock: d.totalQuantityInStock,
+  };
+}
+function mapCsvResult(r) {
+  return { total_rows: r.totalRows, success_rows: r.successRows, error_rows: r.errorRows, errors: r.errors, warnings: r.warnings };
+}
+
+const LocalApi = {
+  async request(method, path, body) {
+    const state = await ensureStateLoaded();
+    const [rawPath, queryStr] = path.split("?");
+    const qs = new URLSearchParams(queryStr || "");
+    let m;
+
+    // ---- 店舗 ----
+    if (method === "GET" && rawPath === "/api/stores") return state.stores;
+    if (method === "POST" && rawPath === "/api/stores") {
+      if (state.stores.some((s) => s.name === body.name)) throw new Error("同名の店舗が既に存在します");
+      const s = { id: state.nextId.store++, name: body.name, note: body.note || "" };
+      state.stores.push(s); await persistState(); return s;
+    }
+    if (method === "PUT" && (m = rawPath.match(/^\/api\/stores\/(\d+)$/))) {
+      const s = state.stores.find((x) => x.id === Number(m[1]));
+      if (!s) throw new Error("店舗が見つかりません");
+      s.name = body.name; s.note = body.note || ""; await persistState(); return s;
+    }
+    if (method === "DELETE" && (m = rawPath.match(/^\/api\/stores\/(\d+)$/))) {
+      const id = Number(m[1]);
+      if (state.stores.length <= 1) throw new Error("最後の1店舗は削除できません");
+      if (!state.stores.some((s) => s.id === id)) throw new Error("店舗が見つかりません");
+      const removed = {
+        stockLots: state.stockLots.filter((x) => x.storeId === id).length,
+        sales: state.sales.filter((x) => x.storeId === id).length,
+        returns: state.returns.filter((x) => x.storeId === id).length,
+        stocktakeEntries: state.stocktakeEntries.filter((x) => x.storeId === id).length,
+        bookTags: state.bookTags.filter((x) => x.storeId === id).length,
+      };
+      state.stockLots = state.stockLots.filter((x) => x.storeId !== id);
+      state.sales = state.sales.filter((x) => x.storeId !== id);
+      state.returns = state.returns.filter((x) => x.storeId !== id);
+      state.stocktakeEntries = state.stocktakeEntries.filter((x) => x.storeId !== id);
+      state.bookTags = state.bookTags.filter((x) => x.storeId !== id);
+      state.stores = state.stores.filter((s) => s.id !== id);
+      await persistState();
+      return { ok: true, removed };
+    }
+
+    // ---- 卸会社 ----
+    if (method === "GET" && rawPath === "/api/wholesalers") return state.wholesalers;
+    if (method === "POST" && rawPath === "/api/wholesalers") {
+      if (state.wholesalers.some((w) => w.name === body.name)) throw new Error("同名の卸会社が既に存在します");
+      const w = { id: state.nextId.wholesaler++, name: body.name, contact: body.contact || "", note: body.note || "" };
+      state.wholesalers.push(w); await persistState(); return w;
+    }
+    if (method === "PUT" && (m = rawPath.match(/^\/api\/wholesalers\/(\d+)$/))) {
+      const w = state.wholesalers.find((x) => x.id === Number(m[1]));
+      if (!w) throw new Error("卸会社が見つかりません");
+      w.name = body.name; w.contact = body.contact || ""; w.note = body.note || ""; await persistState(); return w;
+    }
+    if (method === "DELETE" && (m = rawPath.match(/^\/api\/wholesalers\/(\d+)$/))) {
+      const id = Number(m[1]);
+      if (!state.wholesalers.some((w) => w.id === id)) throw new Error("卸会社が見つかりません");
+      let detachedLots = 0, detachedReturns = 0;
+      state.stockLots.forEach((l) => { if (l.wholesalerId === id) { l.wholesalerId = null; detachedLots++; } });
+      state.returns.forEach((r) => { if (r.wholesalerId === id) { r.wholesalerId = null; detachedReturns++; } });
+      state.wholesalers = state.wholesalers.filter((w) => w.id !== id);
+      await persistState();
+      return { ok: true, detachedLots, detachedReturns };
+    }
+
+    // ---- 書誌 ----
+    if (method === "GET" && rawPath === "/api/books/search") {
+      const q = (qs.get("q") || "").toLowerCase();
+      let list = Object.values(state.books);
+      if (q) {
+        list = list.filter((b) => `${b.isbn} ${b.title} ${b.author} ${b.publisher}`.toLowerCase().includes(q));
+      }
+      list = list.slice().sort((a, b) => (a.title || "").localeCompare(b.title || "", "ja")).slice(0, 100);
+      return list.map(mapBook);
+    }
+    if (method === "GET" && (m = rawPath.match(/^\/api\/books\/([^/]+)$/))) {
+      const book = state.books[decodeURIComponent(m[1])];
+      if (!book) throw new Error("書誌が見つかりません");
+      return mapBook(book);
+    }
+    if (method === "POST" && rawPath === "/api/books") {
+      const isbn = body.isbn;
+      state.books[isbn] = {
+        isbn, title: body.title || "", author: body.author || "", publisher: body.publisher || "",
+        price: body.price || 0, cCode: body.c_code || "", classificationText: body.classification_text || "",
+        magazineCode: body.magazine_code || "", coverUrl: body.cover_url || "", isManualEntry: !!body.is_manual_entry,
+      };
+      await persistState();
+      return mapBook(state.books[isbn]);
+    }
+    if (method === "DELETE" && (m = rawPath.match(/^\/api\/books\/([^/]+)$/))) {
+      const isbn = decodeURIComponent(m[1]);
+      if (!state.books[isbn]) throw new Error("書誌が見つかりません");
+      const removed = {
+        stockLots: state.stockLots.filter((x) => x.isbn === isbn).length,
+        sales: state.sales.filter((x) => x.isbn === isbn).length,
+        returns: state.returns.filter((x) => x.isbn === isbn).length,
+        stocktakeEntries: state.stocktakeEntries.filter((x) => x.isbn === isbn).length,
+        bookTags: state.bookTags.filter((x) => x.isbn === isbn).length,
+      };
+      state.stockLots = state.stockLots.filter((x) => x.isbn !== isbn);
+      state.sales = state.sales.filter((x) => x.isbn !== isbn);
+      state.returns = state.returns.filter((x) => x.isbn !== isbn);
+      state.stocktakeEntries = state.stocktakeEntries.filter((x) => x.isbn !== isbn);
+      state.bookTags = state.bookTags.filter((x) => x.isbn !== isbn);
+      delete state.books[isbn];
+      await persistState();
+      return { ok: true, removed };
+    }
+    if (method === "POST" && rawPath === "/api/books/scan") {
+      const parsed = Barcode.identify(body.code);
+      if (parsed.kind === "isbn") {
+        const isbn = parsed.isbn13;
+        if (!Barcode.ean13ChecksumValid(isbn)) {
+          return { kind: "isbn", isbn, warning: "チェックデジットが一致しません。読み取りを確認してください。", book: null };
+        }
+        const local = state.books[isbn];
+        if (local) return { kind: "isbn", isbn, book: mapBook(local), found_in: "local" };
+        const info = await OpenBd.fetchBookInfo(isbn);
+        if (info) {
+          return {
+            kind: "isbn", isbn, found_in: "openbd",
+            book: {
+              isbn, title: info.title || "", author: info.author || "", publisher: info.publisher || "",
+              price: info.price || 0, c_code: "", classification_text: "", cover_url: info.coverUrl || "", is_manual_entry: false,
+            },
+          };
+        }
+        return { kind: "isbn", isbn, book: null, found_in: "none" };
+      }
+      if (parsed.kind === "price") {
+        return { kind: "price", c_code: parsed.cCode, price: parsed.price, classification_text: parsed.classificationText };
+      }
+      return { kind: "unknown", raw: body.code };
+    }
+
+    // ---- タグ ----
+    if (method === "GET" && rawPath === "/api/tags") return state.tags;
+    if (method === "POST" && rawPath === "/api/tags") {
+      let tag = state.tags.find((t) => t.name === body.name);
+      if (!tag) { tag = { id: state.nextId.tag++, name: body.name }; state.tags.push(tag); await persistState(); }
+      return tag;
+    }
+    if (method === "PUT" && (m = rawPath.match(/^\/api\/tags\/(\d+)$/))) {
+      const tag = state.tags.find((t) => t.id === Number(m[1]));
+      if (!tag) throw new Error("タグが見つかりません");
+      if (state.tags.some((t) => t.name === body.name && t.id !== tag.id)) throw new Error("同名のタグが既に存在します");
+      tag.name = body.name;
+      await persistState();
+      return tag;
+    }
+    if (method === "DELETE" && (m = rawPath.match(/^\/api\/tags\/(\d+)$/))) {
+      const id = Number(m[1]);
+      if (!state.tags.some((t) => t.id === id)) throw new Error("タグが見つかりません");
+      const removedLinks = state.bookTags.filter((bt) => bt.tagId === id).length;
+      state.bookTags = state.bookTags.filter((bt) => bt.tagId !== id);
+      state.tags = state.tags.filter((t) => t.id !== id);
+      await persistState();
+      return { ok: true, removedLinks };
+    }
+    if (method === "GET" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/books\/([^/]+)\/tags$/))) {
+      const storeId = Number(m[1]), isbn = decodeURIComponent(m[2]);
+      const tagIds = state.bookTags.filter((bt) => bt.storeId === storeId && bt.isbn === isbn).map((bt) => bt.tagId);
+      return state.tags.filter((t) => tagIds.includes(t.id));
+    }
+    if (method === "POST" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/books\/([^/]+)\/tags$/))) {
+      const storeId = Number(m[1]), isbn = decodeURIComponent(m[2]);
+      if (!state.books[isbn]) throw new Error("書誌が見つかりません");
+      let tag = state.tags.find((t) => t.name === body.tag_name);
+      if (!tag) { tag = { id: state.nextId.tag++, name: body.tag_name }; state.tags.push(tag); }
+      const exists = state.bookTags.some((bt) => bt.storeId === storeId && bt.isbn === isbn && bt.tagId === tag.id);
+      if (!exists) {
+        state.bookTags.push({ id: state.nextId.bookTag++, storeId, isbn, tagId: tag.id });
+        await persistState();
+      }
+      return { ok: true, tag };
+    }
+    if (method === "DELETE" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/books\/([^/]+)\/tags\/(\d+)$/))) {
+      const storeId = Number(m[1]), isbn = decodeURIComponent(m[2]), tagId = Number(m[3]);
+      state.bookTags = state.bookTags.filter((bt) => !(bt.storeId === storeId && bt.isbn === isbn && bt.tagId === tagId));
+      await persistState();
+      return { ok: true };
+    }
+
+    // ---- 在庫/入荷 ----
+    if (method === "GET" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/stock$/))) {
+      const storeId = Number(m[1]);
+      return Crud.getStockSummary(state, storeId, qs.get("q") || null).map(mapStockItem);
+    }
+    if (method === "POST" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/stock\/receive$/))) {
+      const storeId = Number(m[1]);
+      if (body.purchase_type === "consignment" && !body.consignment_deadline) {
+        throw new Error("委託の場合は返品期限(consignment_deadline)を指定してください");
+      }
+      const req = {
+        isbn: body.isbn, wholesalerId: body.wholesaler_id || null, purchaseType: body.purchase_type,
+        quantity: body.quantity, unitCost: body.unit_cost || 0, receivedDate: body.received_date || null,
+        consignmentDeadline: body.consignment_deadline || null, note: body.note || "",
+        title: body.title, author: body.author, publisher: body.publisher, price: body.price,
+      };
+      const lot = await Crud.receiveStock(state, storeId, req);
+      await persistState();
+      const w = lot.wholesalerId ? state.wholesalers.find((x) => x.id === lot.wholesalerId) : null;
+      return mapLot({ ...lot, wholesalerName: w ? w.name : null });
+    }
+
+    // ---- 売上 ----
+    if (method === "GET" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/sales$/))) {
+      const storeId = Number(m[1]);
+      const days = Number(qs.get("days") || "30");
+      const since = new Date(); since.setDate(since.getDate() - days);
+      const sinceStr = todayStrFromDate(since);
+      return state.sales
+        .filter((s) => s.storeId === storeId && s.saleDate >= sinceStr)
+        .slice()
+        .sort((a, b) => b.saleDate.localeCompare(a.saleDate))
+        .map((r) => ({
+          id: r.id, isbn: r.isbn, title: (state.books[r.isbn] || {}).title || "", quantity: r.quantity,
+          sale_date: r.saleDate, unit_price: r.unitPrice, oversold: r.oversold,
+        }));
+    }
+
+    // ---- 返品 ----
+    if (method === "GET" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/returns\/candidates$/))) {
+      const storeId = Number(m[1]);
+      return Crud.getReturnCandidates(state, storeId).map(mapReturnCandidate);
+    }
+    if (method === "POST" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/returns$/))) {
+      const storeId = Number(m[1]);
+      const rec = Crud.processReturn(state, storeId, {
+        lotId: body.lot_id, quantity: body.quantity, returnDate: body.return_date || null, note: body.note || "",
+      });
+      await persistState();
+      return mapReturnHistory(rec, state);
+    }
+    if (method === "GET" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/returns\/history$/))) {
+      const storeId = Number(m[1]);
+      return state.returns.filter((r) => r.storeId === storeId)
+        .slice().sort((a, b) => b.returnDate.localeCompare(a.returnDate))
+        .map((r) => mapReturnHistory(r, state));
+    }
+
+    // ---- 棚卸 ----
+    if (method === "GET" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/stocktake\/current$/))) {
+      const storeId = Number(m[1]);
+      return Crud.getStocktakeRows(state, storeId).map((r) => ({ isbn: r.isbn, title: r.title, system_qty: r.systemQty }));
+    }
+    if (method === "POST" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/stocktake$/))) {
+      const storeId = Number(m[1]);
+      const result = Crud.processStocktake(state, storeId, {
+        isbn: body.isbn, countedQty: body.counted_qty, takenDate: body.taken_date || null, note: body.note || "",
+      });
+      await persistState();
+      return { isbn: result.isbn, system_qty: result.systemQty, counted_qty: result.countedQty, diff: result.diff };
+    }
+    if (method === "GET" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/stocktake\/history$/))) {
+      const storeId = Number(m[1]);
+      return state.stocktakeEntries.filter((e) => e.storeId === storeId)
+        .slice().sort((a, b) => b.takenDate.localeCompare(a.takenDate)).slice(0, 200)
+        .map((e) => ({
+          isbn: e.isbn, title: (state.books[e.isbn] || {}).title || "", system_qty: e.systemQty,
+          counted_qty: e.countedQty, diff: e.diff, taken_date: e.takenDate, note: e.note,
+        }));
+    }
+
+    // ---- 店舗間移動 ----
+    if (method === "POST" && rawPath === "/api/transfers") {
+      let rec;
+      try {
+        rec = Crud.transferStock(state, {
+          isbn: body.isbn, fromStoreId: body.from_store_id, toStoreId: body.to_store_id,
+          quantity: body.quantity, transferDate: body.transfer_date || null, note: body.note || "",
+        });
+      } catch (e) {
+        throw e;
+      }
+      await persistState();
+      const book = state.books[rec.isbn];
+      const fromStore = state.stores.find((s) => s.id === rec.fromStoreId);
+      const toStore = state.stores.find((s) => s.id === rec.toStoreId);
+      return {
+        id: rec.id, isbn: rec.isbn, title: book ? book.title : "",
+        from_store_id: rec.fromStoreId, from_store_name: fromStore ? fromStore.name : null,
+        to_store_id: rec.toStoreId, to_store_name: toStore ? toStore.name : null,
+        quantity: rec.quantity, transfer_date: rec.transferDate, note: rec.note,
+      };
+    }
+    if (method === "GET" && rawPath === "/api/transfers/history") {
+      const storeIdParam = qs.get("store_id");
+      const storeId = storeIdParam ? Number(storeIdParam) : null;
+      const list = Crud.getTransferHistory(state, storeId);
+      return list.map((t) => {
+        const book = state.books[t.isbn];
+        const fromStore = state.stores.find((s) => s.id === t.fromStoreId);
+        const toStore = state.stores.find((s) => s.id === t.toStoreId);
+        return {
+          id: t.id, isbn: t.isbn, title: book ? book.title : "",
+          from_store_id: t.fromStoreId, from_store_name: fromStore ? fromStore.name : null,
+          to_store_id: t.toStoreId, to_store_name: toStore ? toStore.name : null,
+          quantity: t.quantity, transfer_date: t.transferDate, note: t.note,
+        };
+      });
+    }
+
+    // ---- ダッシュボード ----
+    if (method === "GET" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/dashboard$/))) {
+      const storeId = Number(m[1]);
+      return mapDashboard(Crud.getDashboard(state, storeId));
+    }
+
+    throw new Error(`未対応のAPIです: ${method} ${rawPath}`);
+  },
+
+  async handleUpload(path, file) {
+    const state = await ensureStateLoaded();
+    const buf = await file.arrayBuffer();
+    const text = Csv.decodeArrayBuffer(buf);
+    let m;
+    if ((m = path.match(/^\/api\/stores\/(\d+)\/stock\/import-purchase-csv$/))) {
+      const result = await Crud.importPurchaseCsv(state, Number(m[1]), text);
+      await persistState();
+      return mapCsvResult(result);
+    }
+    if ((m = path.match(/^\/api\/stores\/(\d+)\/sales\/import-csv$/))) {
+      const batch = `import-${Date.now()}`;
+      const result = Crud.importSalesCsv(state, Number(m[1]), text, batch);
+      await persistState();
+      return mapCsvResult(result);
+    }
+    throw new Error(`未対応のアップロード先です: ${path}`);
+  },
+};
+
+
+// ---- 07_api.js ----
+// ============================================================
+// Api: 画面側から見たインターフェースは以前のサーバー版と同じ。
+// 内部ではネットワーク通信の代わりに LocalApi(このブラウザ内のデータ)を呼び出す。
+// ============================================================
+const Api = {
+  async request(method, path, body) {
+    try {
+      return await LocalApi.request(method, path, body);
+    } catch (e) {
+      const err = new Error(e.message || String(e));
+      throw err;
+    }
+  },
+  get(path) { return this.request("GET", path); },
+  post(path, body) { return this.request("POST", path, body); },
+  put(path, body) { return this.request("PUT", path, body); },
+  del(path) { return this.request("DELETE", path); },
+
+  async uploadFile(path, file) {
+    return LocalApi.handleUpload(path, file);
+  },
+};
+
+
+// ---- 08_util.js ----
+// 共通ユーティリティ
+const Util = {
+  escapeHtml(str) {
+    if (str === null || str === undefined) return "";
+    return String(str)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  },
+  fmtDate(d) {
+    if (!d) return "";
+    return String(d).slice(0, 10);
+  },
+  fmtYen(n) {
+    if (n === null || n === undefined) return "";
+    return Number(n).toLocaleString("ja-JP") + "円";
+  },
+  todayStr() {
+    const d = new Date();
+    return d.toISOString().slice(0, 10);
+  },
+  purchaseTypeLabel(t) {
+    if (t === "buy") return "買切";
+    if (t === "consignment") return "委託";
+    if (t === "adjustment") return "調整";
+    return t;
+  },
+  purchaseTypeBadgeClass(t) {
+    if (t === "buy") return "badge badge-buy";
+    if (t === "consignment") return "badge badge-consignment";
+    return "badge badge-adjustment";
+  },
+  toast(message, kind) {
+    const container = document.getElementById("toast-container");
+    const el = document.createElement("div");
+    el.className = "toast" + (kind ? " " + kind : "");
+    el.textContent = message;
+    container.appendChild(el);
+    setTimeout(() => el.remove(), 4500);
+  },
+};
+
+
+// ---- 09_store.js ----
+// 店舗切替の状態管理
+const StoreState = {
+  stores: [],
+  currentStoreId: null,
+
+  async init() {
+    this.stores = await Api.get("/api/stores");
+    if (this.stores.length === 0) {
+      const created = await Api.post("/api/stores", { name: "本店", note: "" });
+      this.stores = [created];
+    }
+    const saved = localStorage.getItem("currentStoreId");
+    const savedId = saved ? parseInt(saved, 10) : null;
+    if (savedId && this.stores.some((s) => s.id === savedId)) {
+      this.currentStoreId = savedId;
+    } else {
+      this.currentStoreId = this.stores[0].id;
+    }
+    this.renderSwitcher();
+  },
+
+  renderSwitcher() {
+    const sel = document.getElementById("store-switcher");
+    sel.innerHTML = this.stores
+      .map((s) => `<option value="${s.id}">${Util.escapeHtml(s.name)}</option>`)
+      .join("");
+    sel.value = this.currentStoreId;
+    sel.onchange = () => {
+      this.currentStoreId = parseInt(sel.value, 10);
+      localStorage.setItem("currentStoreId", this.currentStoreId);
+      Util.toast(`店舗を「${this.getCurrentStore().name}」に切り替えました`);
+      Router.reload();
+    };
+  },
+
+  getCurrentStore() {
+    return this.stores.find((s) => s.id === this.currentStoreId);
+  },
+
+  async refreshStores() {
+    this.stores = await Api.get("/api/stores");
+    if (!this.stores.some((s) => s.id === this.currentStoreId)) {
+      // 選択中だった店舗が削除された場合は先頭の店舗に切り替える
+      this.currentStoreId = this.stores[0].id;
+      localStorage.setItem("currentStoreId", this.currentStoreId);
+    }
+    this.renderSwitcher();
+  },
+};
+
+
+// ---- 10_page_dashboard.js ----
+const PageDashboard = {
+  async render(root) {
+    root.innerHTML = `<p class="loading">読み込み中...</p>`;
+    const storeId = StoreState.currentStoreId;
+    let data;
+    try {
+      data = await Api.get(`/api/stores/${storeId}/dashboard`);
+    } catch (e) {
+      root.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
+      return;
+    }
+
+    const consignmentRows = data.consignment_alerts.length
+      ? data.consignment_alerts.map((a) => `
+        <tr>
+          <td>${Util.escapeHtml(a.title)}</td>
+          <td>${Util.escapeHtml(a.wholesaler_name || "-")}</td>
+          <td>${a.quantity}</td>
+          <td>${Util.fmtDate(a.consignment_deadline)}</td>
+          <td>${a.days_until_deadline < 0
+            ? `<span class="badge badge-danger">期限超過 ${Math.abs(a.days_until_deadline)}日</span>`
+            : `<span class="badge badge-warning">あと${a.days_until_deadline}日</span>`}</td>
+        </tr>`).join("")
+      : `<tr><td colspan="5" class="empty-msg">期限が近い委託在庫はありません</td></tr>`;
+
+    const zeroStockRows = data.zero_stock.length
+      ? data.zero_stock.slice(0, 30).map((z) => `<tr><td>${Util.escapeHtml(z.title || z.isbn)}</td><td>${Util.escapeHtml(z.isbn)}</td></tr>`).join("")
+      : `<tr><td colspan="2" class="empty-msg">在庫切れの書籍はありません</td></tr>`;
+
+    const bestSellerRows = data.best_sellers.length
+      ? data.best_sellers.map((b, i) => `<tr><td>${i + 1}</td><td>${Util.escapeHtml(b.title || b.isbn)}</td><td>${b.total_sold}</td></tr>`).join("")
+      : `<tr><td colspan="3" class="empty-msg">直近30日の売上データがありません</td></tr>`;
+
+    root.innerHTML = `
+      <h1>ダッシュボード</h1>
+      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} の状況サマリー</p>
+
+      <div class="grid-3">
+        <div class="card stat-box">
+          <div class="stat-number">${data.total_titles_in_stock}</div>
+          <div class="stat-label">在庫あり点数</div>
+        </div>
+        <div class="card stat-box">
+          <div class="stat-number">${data.total_quantity_in_stock}</div>
+          <div class="stat-label">在庫合計冊数</div>
+        </div>
+        <div class="card stat-box">
+          <div class="stat-number">${data.consignment_alerts.length}</div>
+          <div class="stat-label">委託返品期限アラート</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0">委託返品期限アラート(14日以内 / 超過含む)</h2>
+        <table>
+          <thead><tr><th>書名</th><th>卸会社</th><th>数量</th><th>返品期限</th><th>状態</th></tr></thead>
+          <tbody>${consignmentRows}</tbody>
+        </table>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h2 style="margin-top:0">在庫0の書籍(上位30件)</h2>
+          <table>
+            <thead><tr><th>書名</th><th>ISBN</th></tr></thead>
+            <tbody>${zeroStockRows}</tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h2 style="margin-top:0">売れ筋ランキング(直近30日)</h2>
+          <table>
+            <thead><tr><th>順位</th><th>書名</th><th>販売数</th></tr></thead>
+            <tbody>${bestSellerRows}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  },
+};
+
+
+// ---- 11_page_stock.js ----
+const PageStock = {
+  async render(root, params) {
+    root.innerHTML = `<p class="loading">読み込み中...</p>`;
+    const storeId = StoreState.currentStoreId;
+    const q = (params && params.q) || "";
+
+    let items;
+    try {
+      items = await Api.get(`/api/stores/${storeId}/stock?q=${encodeURIComponent(q)}`);
+    } catch (e) {
+      root.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
+      return;
+    }
+
+    root.innerHTML = `
+      <h1>在庫一覧</h1>
+      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} の在庫。書籍ごとに卸会社別の内訳を確認できます。</p>
+
+      <div class="card">
+        <div class="form-inline">
+          <div class="form-row" style="flex:1; min-width:220px;">
+            <label>書名・著者・出版社・ISBNで検索</label>
+            <input type="text" id="stock-search" value="${Util.escapeHtml(q)}" placeholder="キーワード">
+          </div>
+          <button id="stock-search-btn">検索</button>
+        </div>
+      </div>
+
+      <div id="stock-list"></div>
+    `;
+
+    document.getElementById("stock-search-btn").onclick = () => {
+      const val = document.getElementById("stock-search").value;
+      Router.navigate("/stock", { q: val });
+    };
+    document.getElementById("stock-search").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") document.getElementById("stock-search-btn").click();
+    });
+
+    const listEl = document.getElementById("stock-list");
+    if (items.length === 0) {
+      listEl.innerHTML = `<p class="empty-msg">該当する在庫がありません</p>`;
+      return;
+    }
+
+    listEl.innerHTML = items.map((item) => this.renderItem(item)).join("");
+
+    // タグ追加/削除のイベントを紐づけ
+    items.forEach((item) => {
+      const addBtn = document.getElementById(`tagadd-${cssId(item.isbn)}`);
+      if (addBtn) {
+        addBtn.onclick = async () => {
+          const input = document.getElementById(`taginput-${cssId(item.isbn)}`);
+          const name = input.value.trim();
+          if (!name) return;
+          try {
+            await Api.post(`/api/stores/${storeId}/books/${encodeURIComponent(item.isbn)}/tags`, { tag_name: name });
+            Util.toast("タグを追加しました", "success");
+            Router.reload();
+          } catch (e) {
+            Util.toast("タグ追加に失敗しました: " + e.message, "error");
+          }
+        };
+      }
+      item.tags.forEach((tagName) => {
+        const delBtn = document.getElementById(`tagdel-${cssId(item.isbn)}-${cssId(tagName)}`);
+        if (delBtn) {
+          delBtn.onclick = async () => {
+            // タグID解決のため一覧から探す(簡易実装: 全タグ取得して名前でマッチ)
+            const allTags = await Api.get("/api/tags");
+            const tag = allTags.find((t) => t.name === tagName);
+            if (!tag) return;
+            await Api.del(`/api/stores/${storeId}/books/${encodeURIComponent(item.isbn)}/tags/${tag.id}`);
+            Util.toast("タグを削除しました", "success");
+            Router.reload();
+          };
+        }
+      });
+    });
+  },
+
+  renderItem(item) {
+    const id = cssId(item.isbn);
+    const lotRows = item.lots.map((lot) => `
+      <tr>
+        <td><span class="${Util.purchaseTypeBadgeClass(lot.purchase_type)}">${Util.purchaseTypeLabel(lot.purchase_type)}</span></td>
+        <td>${Util.escapeHtml(lot.wholesaler_name || "-")}</td>
+        <td>${lot.quantity}</td>
+        <td>${Util.fmtDate(lot.received_date)}</td>
+        <td>${lot.consignment_deadline ? Util.fmtDate(lot.consignment_deadline) : "-"}</td>
+        <td>${Util.escapeHtml(lot.note || "")}</td>
+      </tr>
+    `).join("");
+
+    const tagPills = item.tags.map((t) => `
+      <span class="tag-pill">${Util.escapeHtml(t)}<button id="tagdel-${id}-${cssId(t)}" title="削除">×</button></span>
+    `).join("");
+
+    return `
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;">
+          <div>
+            <strong>${Util.escapeHtml(item.title || "(書名未登録)")}</strong>
+            <div style="color:var(--text-muted); font-size:0.85em;">
+              ${Util.escapeHtml(item.author || "")} / ${Util.escapeHtml(item.publisher || "")} / ISBN: ${Util.escapeHtml(item.isbn)}
+              ${item.price ? " / " + Util.fmtYen(item.price) : ""}
+            </div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-number" style="font-size:1.5em;">${item.total_quantity}</div>
+            <div class="stat-label">合計在庫</div>
+          </div>
+        </div>
+
+        <div style="margin:10px 0;">
+          ${tagPills || '<span class="empty-msg" style="font-style:normal;">タグ未設定</span>'}
+        </div>
+        <div class="form-inline" style="margin-bottom:10px;">
+          <input type="text" id="taginput-${id}" placeholder="新しいタグ(例: 文庫棚A-3)" style="max-width:220px;">
+          <button class="small" id="tagadd-${id}">タグ追加</button>
+        </div>
+
+        <table>
+          <thead><tr><th>仕入形態</th><th>卸会社</th><th>数量</th><th>入荷日</th><th>返品期限</th><th>備考</th></tr></thead>
+          <tbody>${lotRows || '<tr><td colspan="6" class="empty-msg">在庫ロットがありません</td></tr>'}</tbody>
+        </table>
+      </div>
+    `;
+  },
+};
+
+function cssId(s) {
+  return String(s).replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+
+// ---- 12_page_receive.js ----
+const PageReceive = {
+  currentBook: null, // { isbn, title, author, publisher, price, c_code, classification_text }
+  batchSettings: {
+    wholesalerId: null,
+    purchaseType: "buy",
+    consignmentDeadline: "",
+    receivedDate: null,
+  },
+  sessionLog: [], // このページを開いてから登録した項目の一覧(画面上の確認用。ページ再読み込みで消える)
+
+  async render(root) {
+    this.currentBook = null;
+    const storeId = StoreState.currentStoreId;
+    if (!this.batchSettings.receivedDate) this.batchSettings.receivedDate = Util.todayStr();
+    let wholesalers = [];
+    try {
+      wholesalers = await Api.get("/api/wholesalers");
+    } catch (e) { /* ignore */ }
+
+    root.innerHTML = `
+      <h1>入荷登録</h1>
+      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} への入荷を、卸会社・買切/委託を分けて登録します。</p>
+
+      <div class="card" id="batch-settings-card">
+        <h2 style="margin-top:0;">入荷条件(まとめて設定)</h2>
+        <p class="barcode-hint">ここで設定した内容は、変更するまでこのあとスキャンする本すべてに引き継がれます。同じ卸から届いた荷物をまとめて登録するときは、最初に1回設定するだけで大丈夫です。</p>
+        <div class="grid-2">
+          <div class="form-row">
+            <label>卸会社</label>
+            <select id="batch-wholesaler">
+              <option value="" ${!this.batchSettings.wholesalerId ? "selected" : ""}>(指定なし)</option>
+              ${wholesalers.map((w) => `<option value="${w.id}" ${String(w.id) === String(this.batchSettings.wholesalerId) ? "selected" : ""}>${Util.escapeHtml(w.name)}</option>`).join("")}
+            </select>
+          </div>
+          <div class="form-row">
+            <label>仕入形態</label>
+            <select id="batch-purchase-type">
+              <option value="buy" ${this.batchSettings.purchaseType === "buy" ? "selected" : ""}>買切</option>
+              <option value="consignment" ${this.batchSettings.purchaseType === "consignment" ? "selected" : ""}>委託</option>
+            </select>
+          </div>
+          <div class="form-row" id="batch-deadline-row" style="display:${this.batchSettings.purchaseType === "consignment" ? "" : "none"};">
+            <label>返品期限(委託の場合)</label>
+            <input type="date" id="batch-deadline" value="${this.batchSettings.consignmentDeadline || ""}">
+          </div>
+          <div class="form-row">
+            <label>入荷日</label>
+            <input type="date" id="batch-received-date" value="${this.batchSettings.receivedDate}">
+          </div>
+        </div>
+      </div>
+
+      <div class="barcode-box">
+        <label><strong>バーコードをスキャン</strong>(上段のISBNバーコード→下段の価格・分類バーコードの順にスキャンしてください)</label>
+        <input type="text" id="scan-input" autofocus placeholder="ここにカーソルを置いてバーコードをスキャン、または手入力してEnter">
+        <div class="barcode-hint">2段バーコードの下段(192/191から始まるコード)をスキャンすると、価格・分類コードを自動反映します。上の「入荷条件」はそのままで、続けて次の本をスキャンできます。</div>
+      </div>
+
+      <div class="card" id="book-form-card" style="display:none;">
+        <h2 style="margin-top:0;">スキャンした書籍</h2>
+        <div class="grid-2">
+          <div class="form-row"><label>ISBN</label><input type="text" id="f-isbn" readonly></div>
+          <div class="form-row"><label>書名</label><input type="text" id="f-title"></div>
+          <div class="form-row"><label>著者</label><input type="text" id="f-author"></div>
+          <div class="form-row"><label>出版社</label><input type="text" id="f-publisher"></div>
+          <div class="form-row"><label>本体価格(円)</label><input type="number" id="f-price"></div>
+          <div class="form-row"><label>分類(Cコード)</label><input type="text" id="f-classification" readonly></div>
+          <div class="form-row"><label>数量</label><input type="number" id="f-quantity" value="1" min="1"></div>
+          <div class="form-row"><label>仕入単価(任意・円)</label><input type="number" id="f-unit-cost" value="0"></div>
+        </div>
+        <div class="form-row"><label>備考(任意)</label><input type="text" id="f-note"></div>
+        <button id="submit-receive">この内容で登録して次へ</button>
+        <button class="secondary" id="clear-form">この書籍をキャンセル</button>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;">今回の入荷登録ログ</h2>
+        <table>
+          <thead><tr><th>書名</th><th>卸会社</th><th>仕入形態</th><th>数量</th><th>時刻</th></tr></thead>
+          <tbody id="session-log-body">${this.renderLogRows()}</tbody>
+        </table>
+      </div>
+    `;
+
+    document.getElementById("batch-wholesaler").addEventListener("change", (e) => {
+      this.batchSettings.wholesalerId = e.target.value || null;
+    });
+    document.getElementById("batch-purchase-type").addEventListener("change", (e) => {
+      this.batchSettings.purchaseType = e.target.value;
+      document.getElementById("batch-deadline-row").style.display = e.target.value === "consignment" ? "" : "none";
+    });
+    document.getElementById("batch-deadline").addEventListener("change", (e) => {
+      this.batchSettings.consignmentDeadline = e.target.value;
+    });
+    document.getElementById("batch-received-date").addEventListener("change", (e) => {
+      this.batchSettings.receivedDate = e.target.value;
+    });
+
+    const scanInput = document.getElementById("scan-input");
+    scanInput.addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter") return;
+      const code = scanInput.value.trim();
+      scanInput.value = "";
+      if (!code) return;
+      await this.handleScan(code);
+    });
+
+    document.getElementById("submit-receive").onclick = () => this.submit(storeId);
+    document.getElementById("clear-form").onclick = () => this.cancelCurrentBook();
+  },
+
+  renderLogRows() {
+    if (this.sessionLog.length === 0) {
+      return `<tr><td colspan="5" class="empty-msg">まだ登録はありません</td></tr>`;
+    }
+    return this.sessionLog.slice().reverse().map((l) => `
+      <tr>
+        <td>${Util.escapeHtml(l.title || l.isbn)}</td>
+        <td>${Util.escapeHtml(l.wholesalerName || "-")}</td>
+        <td><span class="${Util.purchaseTypeBadgeClass(l.purchaseType)}">${Util.purchaseTypeLabel(l.purchaseType)}</span></td>
+        <td>${l.quantity}</td>
+        <td>${l.time}</td>
+      </tr>
+    `).join("");
+  },
+
+  cancelCurrentBook() {
+    this.currentBook = null;
+    const card = document.getElementById("book-form-card");
+    if (card) card.style.display = "none";
+    const scanInput = document.getElementById("scan-input");
+    if (scanInput) {
+      scanInput.value = "";
+      scanInput.focus();
+    }
+  },
+
+  async handleScan(code) {
+    let result;
+    try {
+      result = await Api.post("/api/books/scan", { code });
+    } catch (e) {
+      Util.toast("スキャン解析に失敗しました: " + e.message, "error");
+      return;
+    }
+
+    if (result.kind === "isbn") {
+      if (result.warning) {
+        Util.toast(result.warning, "warning");
+      }
+      const book = result.book || { isbn: result.isbn, title: "", author: "", publisher: "", price: 0 };
+      this.currentBook = { ...book, isbn: result.isbn };
+      if (result.found_in === "openbd") {
+        Util.toast("openBDから書誌情報を自動取得しました", "success");
+      } else if (result.found_in === "local") {
+        Util.toast("登録済みの書誌が見つかりました", "success");
+      } else if (result.found_in === "none") {
+        Util.toast("書誌情報が見つかりませんでした。手入力してください", "warning");
+      }
+      this.fillBookForm();
+    } else if (result.kind === "price") {
+      if (!this.currentBook) {
+        Util.toast("先にISBN(上段)バーコードをスキャンしてください", "warning");
+        return;
+      }
+      this.currentBook.price = result.price;
+      this.currentBook.c_code = result.c_code;
+      this.currentBook.classification_text = result.classification_text;
+      document.getElementById("f-price").value = result.price;
+      document.getElementById("f-classification").value = result.classification_text;
+      Util.toast("価格・分類コードを反映しました", "success");
+    } else {
+      Util.toast("認識できないバーコードです", "error");
+    }
+  },
+
+  fillBookForm() {
+    document.getElementById("book-form-card").style.display = "";
+    document.getElementById("f-isbn").value = this.currentBook.isbn;
+    document.getElementById("f-title").value = this.currentBook.title || "";
+    document.getElementById("f-author").value = this.currentBook.author || "";
+    document.getElementById("f-publisher").value = this.currentBook.publisher || "";
+    document.getElementById("f-price").value = this.currentBook.price || 0;
+    document.getElementById("f-classification").value = this.currentBook.classification_text || "";
+    const qtyField = document.getElementById("f-quantity");
+    qtyField.value = 1;
+    document.getElementById("f-unit-cost").value = 0;
+    document.getElementById("f-note").value = "";
+    qtyField.focus();
+    qtyField.select();
+  },
+
+  async submit(storeId) {
+    if (!this.currentBook) {
+      Util.toast("先にバーコードをスキャンしてください", "warning");
+      return;
+    }
+    const purchaseType = this.batchSettings.purchaseType;
+    const deadline = this.batchSettings.consignmentDeadline;
+    if (purchaseType === "consignment" && !deadline) {
+      Util.toast("委託の場合は上の「入荷条件」で返品期限を入力してください", "error");
+      return;
+    }
+    const quantity = parseInt(document.getElementById("f-quantity").value || "0", 10);
+    if (!quantity || quantity <= 0) {
+      Util.toast("数量は1以上を入力してください", "error");
+      return;
+    }
+
+    const payload = {
+      isbn: document.getElementById("f-isbn").value,
+      title: document.getElementById("f-title").value,
+      author: document.getElementById("f-author").value,
+      publisher: document.getElementById("f-publisher").value,
+      price: parseInt(document.getElementById("f-price").value || "0", 10),
+      wholesaler_id: this.batchSettings.wholesalerId ? parseInt(this.batchSettings.wholesalerId, 10) : null,
+      purchase_type: purchaseType,
+      quantity,
+      unit_cost: parseInt(document.getElementById("f-unit-cost").value || "0", 10),
+      received_date: this.batchSettings.receivedDate || null,
+      consignment_deadline: purchaseType === "consignment" ? deadline : null,
+      note: document.getElementById("f-note").value,
+    };
+
+    try {
+      const lot = await Api.post(`/api/stores/${storeId}/stock/receive`, payload);
+      Util.toast(`登録しました: ${this.currentBook.title || this.currentBook.isbn} × ${quantity}`, "success");
+      this.sessionLog.push({
+        isbn: this.currentBook.isbn,
+        title: this.currentBook.title,
+        quantity,
+        wholesalerName: lot.wholesaler_name,
+        purchaseType,
+        time: new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }),
+      });
+      const logBody = document.getElementById("session-log-body");
+      if (logBody) logBody.innerHTML = this.renderLogRows();
+      this.cancelCurrentBook();
+    } catch (e) {
+      Util.toast("登録に失敗しました: " + e.message, "error");
+    }
+  },
+};
+
+
+// ---- 13_page_importCsv.js ----
+const PURCHASE_CSV_TEMPLATE =
+  "isbn,title,author,publisher,price,wholesaler_name,purchase_type,quantity,unit_cost,received_date,consignment_deadline\n" +
+  "9784000000000,サンプル書名,サンプル著者,サンプル出版社,1500,日販,買切,10,1050,2026-07-01,\n" +
+  "9784000000001,サンプル書名2,サンプル著者2,サンプル出版社2,1200,トーハン,委託,5,900,2026-07-01,2026-09-30\n";
+
+const SALES_CSV_TEMPLATE =
+  "isbn,quantity,sale_date,unit_price\n" +
+  "9784000000000,2,2026-07-10,1500\n" +
+  "9784000000001,1,2026-07-11,1200\n";
+
+const PageImport = {
+  activeTab: "purchase",
+
+  async render(root, params) {
+    if (params && params.tab) this.activeTab = params.tab;
+    const storeId = StoreState.currentStoreId;
+
+    root.innerHTML = `
+      <h1>CSV取込</h1>
+      <p class="subtitle">卸会社からの入荷データ、POSレジの売上データをCSVファイルで取り込みます。</p>
+
+      <div class="tab-buttons">
+        <button id="tab-purchase" class="${this.activeTab === "purchase" ? "active" : "secondary"}">入荷データ取込</button>
+        <button id="tab-sales" class="${this.activeTab === "sales" ? "active" : "secondary"}">POS売上データ取込</button>
+      </div>
+
+      <div id="tab-content"></div>
+    `;
+
+    document.getElementById("tab-purchase").onclick = () => { this.activeTab = "purchase"; this.render(root); };
+    document.getElementById("tab-sales").onclick = () => { this.activeTab = "sales"; this.render(root); };
+
+    const content = document.getElementById("tab-content");
+    if (this.activeTab === "purchase") {
+      content.innerHTML = `
+        <div class="card">
+          <h2 style="margin-top:0;">入荷データCSV取込</h2>
+          <p>列: <code>isbn, title, author, publisher, price, wholesaler_name, purchase_type(買切/委託), quantity, unit_cost, received_date, consignment_deadline</code></p>
+          <p><button class="small secondary" id="dl-purchase-template">テンプレートCSVをダウンロード</button></p>
+          <input type="file" id="purchase-file" accept=".csv">
+          <button id="purchase-upload-btn">取込実行</button>
+          <div id="purchase-result"></div>
+        </div>
+      `;
+      document.getElementById("dl-purchase-template").onclick = () => {
+        Csv.downloadText("purchase_template.csv", PURCHASE_CSV_TEMPLATE);
+      };
+      document.getElementById("purchase-upload-btn").onclick = async () => {
+        const fileInput = document.getElementById("purchase-file");
+        if (!fileInput.files.length) { Util.toast("CSVファイルを選択してください", "warning"); return; }
+        try {
+          const result = await Api.uploadFile(`/api/stores/${storeId}/stock/import-purchase-csv`, fileInput.files[0]);
+          this.renderResult(document.getElementById("purchase-result"), result);
+        } catch (e) {
+          Util.toast("取込に失敗しました: " + e.message, "error");
+        }
+      };
+    } else {
+      content.innerHTML = `
+        <div class="card">
+          <h2 style="margin-top:0;">POS売上データCSV取込</h2>
+          <p>列: <code>isbn, quantity, sale_date, unit_price</code></p>
+          <p class="barcode-hint">在庫は委託(返品期限が近いもの優先)→買切の順に自動で引き当てられます。書誌が未登録のISBNはスキップされます(先に入荷登録してください)。</p>
+          <p><button class="small secondary" id="dl-sales-template">テンプレートCSVをダウンロード</button></p>
+          <input type="file" id="sales-file" accept=".csv">
+          <button id="sales-upload-btn">取込実行</button>
+          <div id="sales-result"></div>
+        </div>
+      `;
+      document.getElementById("dl-sales-template").onclick = () => {
+        Csv.downloadText("sales_template.csv", SALES_CSV_TEMPLATE);
+      };
+      document.getElementById("sales-upload-btn").onclick = async () => {
+        const fileInput = document.getElementById("sales-file");
+        if (!fileInput.files.length) { Util.toast("CSVファイルを選択してください", "warning"); return; }
+        try {
+          const result = await Api.uploadFile(`/api/stores/${storeId}/sales/import-csv`, fileInput.files[0]);
+          this.renderResult(document.getElementById("sales-result"), result);
+        } catch (e) {
+          Util.toast("取込に失敗しました: " + e.message, "error");
+        }
+      };
+    }
+  },
+
+  renderResult(el, result) {
+    Util.toast(`取込完了: 成功${result.success_rows}件 / 失敗${result.error_rows}件`, result.error_rows > 0 ? "warning" : "success");
+    el.innerHTML = `
+      <p style="margin-top:14px;">全${result.total_rows}行中、成功 ${result.success_rows}件、エラー ${result.error_rows}件</p>
+      ${result.errors.length ? `<div class="csv-errors"><strong>エラー</strong><ul>${result.errors.map((e) => `<li>${Util.escapeHtml(e)}</li>`).join("")}</ul></div>` : ""}
+      ${result.warnings.length ? `<div class="csv-warnings"><strong>警告</strong><ul>${result.warnings.map((w) => `<li>${Util.escapeHtml(w)}</li>`).join("")}</ul></div>` : ""}
+    `;
+  },
+};
+
+
+// ---- 14_page_sales.js ----
+const PageSales = {
+  async render(root) {
+    root.innerHTML = `<p class="loading">読み込み中...</p>`;
+    const storeId = StoreState.currentStoreId;
+    let rows;
+    try {
+      rows = await Api.get(`/api/stores/${storeId}/sales?days=90`);
+    } catch (e) {
+      root.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
+      return;
+    }
+
+    const body = rows.length
+      ? rows.map((r) => `
+        <tr>
+          <td>${Util.fmtDate(r.sale_date)}</td>
+          <td>${Util.escapeHtml(r.title || r.isbn)}</td>
+          <td>${r.quantity}</td>
+          <td>${Util.fmtYen(r.unit_price)}</td>
+          <td>${r.oversold ? '<span class="badge badge-danger">在庫超過</span>' : ""}</td>
+        </tr>`).join("")
+      : `<tr><td colspan="5" class="empty-msg">直近90日の売上データがありません</td></tr>`;
+
+    root.innerHTML = `
+      <h1>売上履歴</h1>
+      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} の直近90日の販売履歴(POS取込データ)</p>
+      <div class="card">
+        <table>
+          <thead><tr><th>販売日</th><th>書名</th><th>数量</th><th>単価</th><th>備考</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+    `;
+  },
+};
+
+
+// ---- 15_page_returns.js ----
+const PageReturns = {
+  activeTab: "candidates",
+
+  async render(root, params) {
+    if (params && params.tab) this.activeTab = params.tab;
+    const storeId = StoreState.currentStoreId;
+
+    root.innerHTML = `
+      <h1>返品管理</h1>
+      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} の委託在庫の返品期限・数量を管理します。</p>
+      <div class="tab-buttons">
+        <button id="tab-candidates" class="${this.activeTab === "candidates" ? "active" : "secondary"}">返品対象一覧</button>
+        <button id="tab-history" class="${this.activeTab === "history" ? "active" : "secondary"}">返品履歴</button>
+      </div>
+      <div id="tab-content"><p class="loading">読み込み中...</p></div>
+    `;
+    document.getElementById("tab-candidates").onclick = () => { this.activeTab = "candidates"; this.render(root); };
+    document.getElementById("tab-history").onclick = () => { this.activeTab = "history"; this.render(root); };
+
+    const content = document.getElementById("tab-content");
+    if (this.activeTab === "candidates") {
+      await this.renderCandidates(content, storeId);
+    } else {
+      await this.renderHistory(content, storeId);
+    }
+  },
+
+  async renderCandidates(content, storeId) {
+    let candidates;
+    try {
+      candidates = await Api.get(`/api/stores/${storeId}/returns/candidates`);
+    } catch (e) {
+      content.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
+      return;
+    }
+
+    if (candidates.length === 0) {
+      content.innerHTML = `<p class="empty-msg">返品可能な委託在庫はありません</p>`;
+      return;
+    }
+
+    content.innerHTML = `
+      <div class="card">
+        <table>
+          <thead><tr><th>書名</th><th>卸会社</th><th>在庫数</th><th>返品期限</th><th>状態</th><th>返品数量</th><th></th></tr></thead>
+          <tbody>
+            ${candidates.map((c) => `
+              <tr>
+                <td>${Util.escapeHtml(c.title || c.isbn)}</td>
+                <td>${Util.escapeHtml(c.wholesaler_name || "-")}</td>
+                <td>${c.quantity}</td>
+                <td>${Util.fmtDate(c.consignment_deadline)}</td>
+                <td>${c.days_until_deadline === null ? "-" :
+                  c.days_until_deadline < 0
+                    ? `<span class="badge badge-danger">期限超過</span>`
+                    : c.days_until_deadline <= 14
+                      ? `<span class="badge badge-warning">あと${c.days_until_deadline}日</span>`
+                      : `あと${c.days_until_deadline}日`}</td>
+                <td><input type="number" min="1" max="${c.quantity}" value="${c.quantity}" id="ret-qty-${c.lot_id}" style="width:70px;"></td>
+                <td><button class="small" id="ret-btn-${c.lot_id}">返品登録</button></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    candidates.forEach((c) => {
+      document.getElementById(`ret-btn-${c.lot_id}`).onclick = async () => {
+        const qty = parseInt(document.getElementById(`ret-qty-${c.lot_id}`).value || "0", 10);
+        if (!qty || qty <= 0) { Util.toast("数量を入力してください", "warning"); return; }
+        try {
+          await Api.post(`/api/stores/${storeId}/returns`, { lot_id: c.lot_id, quantity: qty, note: "" });
+          Util.toast("返品登録しました", "success");
+          Router.reload();
+        } catch (e) {
+          Util.toast("返品登録に失敗しました: " + e.message, "error");
+        }
+      };
+    });
+  },
+
+  async renderHistory(content, storeId) {
+    let rows;
+    try {
+      rows = await Api.get(`/api/stores/${storeId}/returns/history`);
+    } catch (e) {
+      content.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
+      return;
+    }
+    content.innerHTML = `
+      <div class="card">
+        <table>
+          <thead><tr><th>返品日</th><th>書名</th><th>卸会社</th><th>数量</th><th>備考</th></tr></thead>
+          <tbody>
+            ${rows.length ? rows.map((r) => `
+              <tr>
+                <td>${Util.fmtDate(r.return_date)}</td>
+                <td>${Util.escapeHtml(r.title || r.isbn)}</td>
+                <td>${Util.escapeHtml(r.wholesaler_name || "-")}</td>
+                <td>${r.quantity}</td>
+                <td>${Util.escapeHtml(r.note || "")}</td>
+              </tr>
+            `).join("") : '<tr><td colspan="5" class="empty-msg">返品履歴はありません</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+  },
+};
+
+
+// ---- 16_page_stocktake.js ----
+const PageStocktake = {
+  async render(root) {
+    root.innerHTML = `<p class="loading">読み込み中...</p>`;
+    const storeId = StoreState.currentStoreId;
+    let rows;
+    try {
+      rows = await Api.get(`/api/stores/${storeId}/stocktake/current`);
+    } catch (e) {
+      root.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
+      return;
+    }
+
+    root.innerHTML = `
+      <h1>棚卸(実地在庫確認)</h1>
+      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} のシステム上在庫と実地カウント数を比較し、差異を登録します。差異は卸会社別の内訳を変えずに「調整」として反映されます。</p>
+
+      <div class="card">
+        <table>
+          <thead><tr><th>書名</th><th>ISBN</th><th>システム在庫</th><th>実地カウント数</th><th></th></tr></thead>
+          <tbody>
+            ${rows.length ? rows.map((r) => `
+              <tr>
+                <td>${Util.escapeHtml(r.title || r.isbn)}</td>
+                <td>${Util.escapeHtml(r.isbn)}</td>
+                <td>${r.system_qty}</td>
+                <td><input type="number" min="0" value="${r.system_qty}" id="st-count-${cssId(r.isbn)}" style="width:80px;"></td>
+                <td><button class="small" id="st-btn-${cssId(r.isbn)}">登録</button></td>
+              </tr>
+            `).join("") : '<tr><td colspan="5" class="empty-msg">在庫データがありません</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;">棚卸履歴</h2>
+        <div id="stocktake-history"><p class="loading">読み込み中...</p></div>
+      </div>
+    `;
+
+    rows.forEach((r) => {
+      const id = cssId(r.isbn);
+      document.getElementById(`st-btn-${id}`).onclick = async () => {
+        const counted = parseInt(document.getElementById(`st-count-${id}`).value || "0", 10);
+        try {
+          const result = await Api.post(`/api/stores/${storeId}/stocktake`, { isbn: r.isbn, counted_qty: counted });
+          if (result.diff === 0) {
+            Util.toast("差異なし。棚卸を記録しました", "success");
+          } else {
+            Util.toast(`差異 ${result.diff > 0 ? "+" : ""}${result.diff} 冊を調整登録しました`, "warning");
+          }
+          Router.reload();
+        } catch (e) {
+          Util.toast("登録に失敗しました: " + e.message, "error");
+        }
+      };
+    });
+
+    try {
+      const history = await Api.get(`/api/stores/${storeId}/stocktake/history`);
+      const histEl = document.getElementById("stocktake-history");
+      histEl.innerHTML = `
+        <table>
+          <thead><tr><th>実施日</th><th>書名</th><th>システム在庫</th><th>実地カウント</th><th>差異</th></tr></thead>
+          <tbody>
+            ${history.length ? history.map((h) => `
+              <tr>
+                <td>${Util.fmtDate(h.taken_date)}</td>
+                <td>${Util.escapeHtml(h.title || h.isbn)}</td>
+                <td>${h.system_qty}</td>
+                <td>${h.counted_qty}</td>
+                <td>${h.diff === 0 ? "0" : `<span class="${h.diff > 0 ? 'badge badge-buy' : 'badge badge-danger'}">${h.diff > 0 ? "+" : ""}${h.diff}</span>`}</td>
+              </tr>
+            `).join("") : '<tr><td colspan="5" class="empty-msg">棚卸履歴はありません</td></tr>'}
+          </tbody>
+        </table>
+      `;
+    } catch (e) {
+      document.getElementById("stocktake-history").innerHTML = `<p class="error-msg">履歴の読み込みに失敗しました</p>`;
+    }
+  },
+};
+
+
+// ---- 17_page_masters.js ----
+const PageMasters = {
+  activeTab: "stores",
+  editingStoreId: null,
+  editingWholesalerId: null,
+  editingTagId: null,
+  editingBookIsbn: null, // 書誌の「編集モード」かどうか(nullなら新規登録モード)
+
+  async render(root, params) {
+    if (params && params.tab) this.activeTab = params.tab;
+    root.innerHTML = `
+      <h1>マスタ管理</h1>
+      <p class="subtitle">店舗・卸会社・書誌・タグのマスタデータを管理します。登録済みのデータはすべて編集・削除できます。</p>
+      <div class="tab-buttons">
+        <button id="tab-stores" class="${this.activeTab === "stores" ? "active" : "secondary"}">店舗</button>
+        <button id="tab-wholesalers" class="${this.activeTab === "wholesalers" ? "active" : "secondary"}">卸会社</button>
+        <button id="tab-books" class="${this.activeTab === "books" ? "active" : "secondary"}">書誌検索・手動登録</button>
+        <button id="tab-tags" class="${this.activeTab === "tags" ? "active" : "secondary"}">タグ一覧</button>
+      </div>
+      <div id="tab-content"><p class="loading">読み込み中...</p></div>
+    `;
+    document.getElementById("tab-stores").onclick = () => { this.activeTab = "stores"; this.render(root); };
+    document.getElementById("tab-wholesalers").onclick = () => { this.activeTab = "wholesalers"; this.render(root); };
+    document.getElementById("tab-books").onclick = () => { this.activeTab = "books"; this.render(root); };
+    document.getElementById("tab-tags").onclick = () => { this.activeTab = "tags"; this.render(root); };
+
+    const content = document.getElementById("tab-content");
+    if (this.activeTab === "stores") await this.renderStores(content);
+    else if (this.activeTab === "wholesalers") await this.renderWholesalers(content);
+    else if (this.activeTab === "books") await this.renderBooks(content);
+    else await this.renderTags(content);
+  },
+
+  // ---------------- 店舗 ----------------
+  async renderStores(content) {
+    const stores = await Api.get("/api/stores");
+    content.innerHTML = `
+      <div class="card">
+        <table>
+          <thead><tr><th>店舗名</th><th>備考</th><th></th></tr></thead>
+          <tbody>
+            ${stores.map((s) => {
+              if (s.id === this.editingStoreId) {
+                return `
+                  <tr>
+                    <td><input type="text" id="edit-store-name-${s.id}" value="${Util.escapeHtml(s.name)}"></td>
+                    <td><input type="text" id="edit-store-note-${s.id}" value="${Util.escapeHtml(s.note || "")}"></td>
+                    <td>
+                      <button class="small" id="save-store-${s.id}">保存</button>
+                      <button class="small secondary" id="cancel-store-${s.id}">キャンセル</button>
+                    </td>
+                  </tr>`;
+              }
+              return `
+                <tr>
+                  <td>${Util.escapeHtml(s.name)}</td>
+                  <td>${Util.escapeHtml(s.note || "")}</td>
+                  <td>
+                    <button class="small secondary" id="edit-store-btn-${s.id}">編集</button>
+                    ${stores.length > 1 ? `<button class="small danger" id="delete-store-btn-${s.id}">削除</button>` : ""}
+                  </td>
+                </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+        ${stores.length <= 1 ? '<p class="barcode-hint">店舗は最低1件必要なため、最後の1店舗は削除できません。</p>' : ""}
+      </div>
+      <div class="card">
+        <h2 style="margin-top:0;">店舗を追加</h2>
+        <div class="form-inline">
+          <div class="form-row"><label>店舗名</label><input type="text" id="new-store-name"></div>
+          <div class="form-row"><label>備考</label><input type="text" id="new-store-note"></div>
+          <button id="add-store-btn">追加</button>
+        </div>
+      </div>
+    `;
+
+    stores.forEach((s) => {
+      if (s.id === this.editingStoreId) {
+        document.getElementById(`save-store-${s.id}`).onclick = async () => {
+          const name = document.getElementById(`edit-store-name-${s.id}`).value.trim();
+          const note = document.getElementById(`edit-store-note-${s.id}`).value;
+          if (!name) { Util.toast("店舗名を入力してください", "warning"); return; }
+          try {
+            await Api.put(`/api/stores/${s.id}`, { name, note });
+            await StoreState.refreshStores();
+            Util.toast("店舗を更新しました", "success");
+            this.editingStoreId = null;
+            this.render(document.getElementById("app"));
+          } catch (e) {
+            Util.toast("更新に失敗しました: " + e.message, "error");
+          }
+        };
+        document.getElementById(`cancel-store-${s.id}`).onclick = () => {
+          this.editingStoreId = null;
+          this.render(document.getElementById("app"));
+        };
+      } else {
+        document.getElementById(`edit-store-btn-${s.id}`).onclick = () => {
+          this.editingStoreId = s.id;
+          this.render(document.getElementById("app"));
+        };
+        const delBtn = document.getElementById(`delete-store-btn-${s.id}`);
+        if (delBtn) {
+          delBtn.onclick = async () => {
+            const ok = window.confirm(
+              `店舗「${s.name}」を削除します。この店舗の在庫・売上・返品・棚卸履歴もすべて削除され、元に戻せません。よろしいですか?`
+            );
+            if (!ok) return;
+            try {
+              const result = await Api.del(`/api/stores/${s.id}`);
+              await StoreState.refreshStores();
+              Util.toast(
+                `店舗を削除しました(在庫ロット${result.removed.stockLots}件、売上${result.removed.sales}件、返品${result.removed.returns}件を含む)`,
+                "success"
+              );
+              this.render(document.getElementById("app"));
+            } catch (e) {
+              Util.toast("削除に失敗しました: " + e.message, "error");
+            }
+          };
+        }
+      }
+    });
+
+    document.getElementById("add-store-btn").onclick = async () => {
+      const name = document.getElementById("new-store-name").value.trim();
+      if (!name) { Util.toast("店舗名を入力してください", "warning"); return; }
+      try {
+        await Api.post("/api/stores", { name, note: document.getElementById("new-store-note").value });
+        await StoreState.refreshStores();
+        Util.toast("店舗を追加しました", "success");
+        this.render(document.getElementById("app"));
+      } catch (e) {
+        Util.toast("追加に失敗しました: " + e.message, "error");
+      }
+    };
+  },
+
+  // ---------------- 卸会社 ----------------
+  async renderWholesalers(content) {
+    const wholesalers = await Api.get("/api/wholesalers");
+    content.innerHTML = `
+      <div class="card">
+        <table>
+          <thead><tr><th>卸会社名</th><th>連絡先</th><th>備考</th><th></th></tr></thead>
+          <tbody>
+            ${wholesalers.map((w) => {
+              if (w.id === this.editingWholesalerId) {
+                return `
+                  <tr>
+                    <td><input type="text" id="edit-w-name-${w.id}" value="${Util.escapeHtml(w.name)}"></td>
+                    <td><input type="text" id="edit-w-contact-${w.id}" value="${Util.escapeHtml(w.contact || "")}"></td>
+                    <td><input type="text" id="edit-w-note-${w.id}" value="${Util.escapeHtml(w.note || "")}"></td>
+                    <td>
+                      <button class="small" id="save-w-${w.id}">保存</button>
+                      <button class="small secondary" id="cancel-w-${w.id}">キャンセル</button>
+                    </td>
+                  </tr>`;
+              }
+              return `
+                <tr>
+                  <td>${Util.escapeHtml(w.name)}</td>
+                  <td>${Util.escapeHtml(w.contact || "")}</td>
+                  <td>${Util.escapeHtml(w.note || "")}</td>
+                  <td>
+                    <button class="small secondary" id="edit-w-btn-${w.id}">編集</button>
+                    <button class="small danger" id="delete-w-btn-${w.id}">削除</button>
+                  </td>
+                </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2 style="margin-top:0;">卸会社を追加</h2>
+        <div class="form-inline">
+          <div class="form-row"><label>卸会社名</label><input type="text" id="new-w-name"></div>
+          <div class="form-row"><label>連絡先</label><input type="text" id="new-w-contact"></div>
+          <div class="form-row"><label>備考</label><input type="text" id="new-w-note"></div>
+          <button id="add-w-btn">追加</button>
+        </div>
+      </div>
+    `;
+
+    wholesalers.forEach((w) => {
+      if (w.id === this.editingWholesalerId) {
+        document.getElementById(`save-w-${w.id}`).onclick = async () => {
+          const name = document.getElementById(`edit-w-name-${w.id}`).value.trim();
+          if (!name) { Util.toast("卸会社名を入力してください", "warning"); return; }
+          try {
+            await Api.put(`/api/wholesalers/${w.id}`, {
+              name,
+              contact: document.getElementById(`edit-w-contact-${w.id}`).value,
+              note: document.getElementById(`edit-w-note-${w.id}`).value,
+            });
+            Util.toast("卸会社を更新しました", "success");
+            this.editingWholesalerId = null;
+            this.render(document.getElementById("app"));
+          } catch (e) {
+            Util.toast("更新に失敗しました: " + e.message, "error");
+          }
+        };
+        document.getElementById(`cancel-w-${w.id}`).onclick = () => {
+          this.editingWholesalerId = null;
+          this.render(document.getElementById("app"));
+        };
+      } else {
+        document.getElementById(`edit-w-btn-${w.id}`).onclick = () => {
+          this.editingWholesalerId = w.id;
+          this.render(document.getElementById("app"));
+        };
+        document.getElementById(`delete-w-btn-${w.id}`).onclick = async () => {
+          const ok = window.confirm(
+            `卸会社「${w.name}」を削除します。この卸会社が紐づいている入荷・返品データは「卸会社不明」として残ります。よろしいですか?`
+          );
+          if (!ok) return;
+          try {
+            const result = await Api.del(`/api/wholesalers/${w.id}`);
+            Util.toast(
+              `卸会社を削除しました(入荷ロット${result.detachedLots}件、返品${result.detachedReturns}件の卸会社情報を解除)`,
+              "success"
+            );
+            this.render(document.getElementById("app"));
+          } catch (e) {
+            Util.toast("削除に失敗しました: " + e.message, "error");
+          }
+        };
+      }
+    });
+
+    document.getElementById("add-w-btn").onclick = async () => {
+      const name = document.getElementById("new-w-name").value.trim();
+      if (!name) { Util.toast("卸会社名を入力してください", "warning"); return; }
+      try {
+        await Api.post("/api/wholesalers", {
+          name, contact: document.getElementById("new-w-contact").value, note: document.getElementById("new-w-note").value,
+        });
+        Util.toast("卸会社を追加しました", "success");
+        this.render(document.getElementById("app"));
+      } catch (e) {
+        Util.toast("追加に失敗しました: " + e.message, "error");
+      }
+    };
+  },
+
+  // ---------------- 書誌 ----------------
+  async renderBooks(content) {
+    const editing = !!this.editingBookIsbn;
+    let editBook = null;
+    if (editing) {
+      try { editBook = await Api.get(`/api/books/${encodeURIComponent(this.editingBookIsbn)}`); }
+      catch (e) { this.editingBookIsbn = null; }
+    }
+
+    content.innerHTML = `
+      <div class="card">
+        <div class="form-inline">
+          <div class="form-row" style="flex:1;"><label>検索(ISBN・書名・著者・出版社)</label><input type="text" id="book-search-input"></div>
+          <button id="book-search-btn">検索</button>
+        </div>
+        <div id="book-search-result"></div>
+      </div>
+      <div class="card">
+        <h2 style="margin-top:0;">${editing ? "書誌を編集" : "書誌を手動登録"}</h2>
+        <div class="grid-2">
+          <div class="form-row"><label>ISBN</label><input type="text" id="mb-isbn" ${editing ? "readonly" : ""} value="${editBook ? Util.escapeHtml(editBook.isbn) : ""}"></div>
+          <div class="form-row"><label>書名</label><input type="text" id="mb-title" value="${editBook ? Util.escapeHtml(editBook.title) : ""}"></div>
+          <div class="form-row"><label>著者</label><input type="text" id="mb-author" value="${editBook ? Util.escapeHtml(editBook.author) : ""}"></div>
+          <div class="form-row"><label>出版社</label><input type="text" id="mb-publisher" value="${editBook ? Util.escapeHtml(editBook.publisher) : ""}"></div>
+          <div class="form-row"><label>本体価格</label><input type="number" id="mb-price" value="${editBook ? editBook.price : ""}"></div>
+          <div class="form-row"><label>分類(Cコード・4桁)</label><input type="text" id="mb-ccode" value="${editBook ? Util.escapeHtml(editBook.c_code || "") : ""}"></div>
+          <div class="form-row"><label>分類表示テキスト</label><input type="text" id="mb-classification" value="${editBook ? Util.escapeHtml(editBook.classification_text || "") : ""}"></div>
+          <div class="form-row"><label>雑誌コード(任意)</label><input type="text" id="mb-magazine" value="${editBook ? Util.escapeHtml(editBook.magazine_code || "") : ""}"></div>
+          <div class="form-row"><label>表紙画像URL(任意)</label><input type="text" id="mb-cover" value="${editBook ? Util.escapeHtml(editBook.cover_url || "") : ""}"></div>
+        </div>
+        <button id="mb-save-btn">${editing ? "更新する" : "保存"}</button>
+        ${editing ? '<button class="secondary" id="mb-cancel-btn">新規登録に戻す</button>' : ""}
+        ${editing ? '<button class="danger" id="mb-delete-btn">この書誌を削除</button>' : ""}
+      </div>
+    `;
+
+    const doSearch = async () => {
+      const q = document.getElementById("book-search-input").value;
+      const books = await Api.get(`/api/books/search?q=${encodeURIComponent(q)}`);
+      document.getElementById("book-search-result").innerHTML = `
+        <table style="margin-top:10px;">
+          <thead><tr><th>ISBN</th><th>書名</th><th>著者</th><th>出版社</th><th>価格</th><th></th></tr></thead>
+          <tbody>${books.length ? books.map((b) => `
+            <tr>
+              <td>${Util.escapeHtml(b.isbn)}</td><td>${Util.escapeHtml(b.title)}</td>
+              <td>${Util.escapeHtml(b.author)}</td><td>${Util.escapeHtml(b.publisher)}</td>
+              <td>${b.price ? Util.fmtYen(b.price) : ""}</td>
+              <td>
+                <button class="small secondary" id="edit-book-${cssId(b.isbn)}">編集</button>
+                <button class="small danger" id="delete-book-${cssId(b.isbn)}">削除</button>
+              </td>
+            </tr>`).join("") : '<tr><td colspan="6" class="empty-msg">該当なし</td></tr>'}</tbody>
+        </table>
+      `;
+      books.forEach((b) => {
+        const btn = document.getElementById(`edit-book-${cssId(b.isbn)}`);
+        if (btn) {
+          btn.onclick = () => {
+            this.editingBookIsbn = b.isbn;
+            this.render(document.getElementById("app"));
+          };
+        }
+        const delBtn = document.getElementById(`delete-book-${cssId(b.isbn)}`);
+        if (delBtn) {
+          delBtn.onclick = () => this.deleteBook(b.isbn, b.title);
+        }
+      });
+    };
+    document.getElementById("book-search-btn").onclick = doSearch;
+    document.getElementById("book-search-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doSearch();
+    });
+    if (editing) {
+      document.getElementById("book-search-input").value = editBook.isbn;
+      await doSearch();
+    }
+
+    if (editing) {
+      document.getElementById("mb-cancel-btn").onclick = () => {
+        this.editingBookIsbn = null;
+        this.render(document.getElementById("app"));
+      };
+      document.getElementById("mb-delete-btn").onclick = () => this.deleteBook(editBook.isbn, editBook.title);
+    }
+
+    document.getElementById("mb-save-btn").onclick = async () => {
+      const isbn = document.getElementById("mb-isbn").value.trim();
+      if (!isbn) { Util.toast("ISBNを入力してください", "warning"); return; }
+      try {
+        await Api.post("/api/books", {
+          isbn, title: document.getElementById("mb-title").value,
+          author: document.getElementById("mb-author").value,
+          publisher: document.getElementById("mb-publisher").value,
+          price: parseInt(document.getElementById("mb-price").value || "0", 10),
+          c_code: document.getElementById("mb-ccode").value,
+          classification_text: document.getElementById("mb-classification").value,
+          magazine_code: document.getElementById("mb-magazine").value,
+          cover_url: document.getElementById("mb-cover").value,
+          is_manual_entry: true,
+        });
+        Util.toast(editing ? "書誌を更新しました" : "書誌を保存しました", "success");
+        this.editingBookIsbn = null;
+        this.render(document.getElementById("app"));
+      } catch (e) {
+        Util.toast("保存に失敗しました: " + e.message, "error");
+      }
+    };
+  },
+
+  async deleteBook(isbn, title) {
+    const ok = window.confirm(
+      `書誌「${title || isbn}」を削除します。全店舗の在庫・売上・返品・棚卸履歴・タグ付けもすべて削除され、元に戻せません。よろしいですか?`
+    );
+    if (!ok) return;
+    try {
+      const result = await Api.del(`/api/books/${encodeURIComponent(isbn)}`);
+      Util.toast(
+        `書誌を削除しました(在庫ロット${result.removed.stockLots}件、売上${result.removed.sales}件、返品${result.removed.returns}件を含む)`,
+        "success"
+      );
+      if (this.editingBookIsbn === isbn) this.editingBookIsbn = null;
+      this.render(document.getElementById("app"));
+    } catch (e) {
+      Util.toast("削除に失敗しました: " + e.message, "error");
+    }
+  },
+
+  // ---------------- タグ ----------------
+  async renderTags(content) {
+    const tags = await Api.get("/api/tags");
+    content.innerHTML = `
+      <div class="card">
+        <p>タグは在庫一覧画面から書籍ごとに自由に付与・削除できます。ここでは名称の変更・タグ自体の削除ができます。</p>
+        <table>
+          <thead><tr><th>タグ名</th><th></th></tr></thead>
+          <tbody>
+            ${tags.length ? tags.map((t) => {
+              if (t.id === this.editingTagId) {
+                return `
+                  <tr>
+                    <td><input type="text" id="edit-tag-name-${t.id}" value="${Util.escapeHtml(t.name)}"></td>
+                    <td>
+                      <button class="small" id="save-tag-${t.id}">保存</button>
+                      <button class="small secondary" id="cancel-tag-${t.id}">キャンセル</button>
+                    </td>
+                  </tr>`;
+              }
+              return `
+                <tr>
+                  <td>${Util.escapeHtml(t.name)}</td>
+                  <td>
+                    <button class="small secondary" id="edit-tag-btn-${t.id}">編集</button>
+                    <button class="small danger" id="delete-tag-btn-${t.id}">削除</button>
+                  </td>
+                </tr>`;
+            }).join("") : '<tr><td colspan="2" class="empty-msg">タグはまだ登録されていません</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    tags.forEach((t) => {
+      if (t.id === this.editingTagId) {
+        document.getElementById(`save-tag-${t.id}`).onclick = async () => {
+          const name = document.getElementById(`edit-tag-name-${t.id}`).value.trim();
+          if (!name) { Util.toast("タグ名を入力してください", "warning"); return; }
+          try {
+            await Api.put(`/api/tags/${t.id}`, { name });
+            Util.toast("タグ名を更新しました", "success");
+            this.editingTagId = null;
+            this.render(document.getElementById("app"));
+          } catch (e) {
+            Util.toast("更新に失敗しました: " + e.message, "error");
+          }
+        };
+        document.getElementById(`cancel-tag-${t.id}`).onclick = () => {
+          this.editingTagId = null;
+          this.render(document.getElementById("app"));
+        };
+      } else {
+        document.getElementById(`edit-tag-btn-${t.id}`).onclick = () => {
+          this.editingTagId = t.id;
+          this.render(document.getElementById("app"));
+        };
+        document.getElementById(`delete-tag-btn-${t.id}`).onclick = async () => {
+          const ok = window.confirm(`タグ「${t.name}」を削除します。すべての書籍からこのタグが外れます。よろしいですか?`);
+          if (!ok) return;
+          try {
+            const result = await Api.del(`/api/tags/${t.id}`);
+            Util.toast(`タグを削除しました(${result.removedLinks}件の書籍から解除)`, "success");
+            this.render(document.getElementById("app"));
+          } catch (e) {
+            Util.toast("削除に失敗しました: " + e.message, "error");
+          }
+        };
+      }
+    });
+  },
+};
+
+
+// ---- 18_page_data.js ----
+const PageData = {
+  async render(root) {
+    const state = await ensureStateLoaded();
+    const stats = {
+      stores: state.stores.length,
+      wholesalers: state.wholesalers.length,
+      books: Object.keys(state.books).length,
+      stockLots: state.stockLots.length,
+      sales: state.sales.length,
+      returns: state.returns.length,
+    };
+
+    root.innerHTML = `
+      <h1>データのバックアップ・他のパソコンへの移行</h1>
+      <p class="subtitle">このアプリはインターネットやサーバーを使わず、このブラウザの中だけにデータを保存しています。定期的にエクスポートしてバックアップを取ることをおすすめします。</p>
+
+      <div class="card">
+        <h2 style="margin-top:0;">現在のデータ件数</h2>
+        <table>
+          <tbody>
+            <tr><td>店舗</td><td>${stats.stores} 件</td></tr>
+            <tr><td>卸会社</td><td>${stats.wholesalers} 件</td></tr>
+            <tr><td>書誌(登録タイトル数)</td><td>${stats.books} 件</td></tr>
+            <tr><td>在庫ロット</td><td>${stats.stockLots} 件</td></tr>
+            <tr><td>売上履歴</td><td>${stats.sales} 件</td></tr>
+            <tr><td>返品履歴</td><td>${stats.returns} 件</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;">エクスポート(バックアップ・他のパソコンへ渡す)</h2>
+        <p>すべてのデータを1つのファイル(.json)としてダウンロードします。他のパソコンでこのアプリを開き、下の「インポート」でこのファイルを読み込めば、同じデータを引き継げます。</p>
+        <button id="export-btn">エクスポートする</button>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;">インポート(バックアップから復元・他のパソコンのデータを取り込む)</h2>
+        <p style="color:var(--danger);">注意: インポートすると、今このパソコンに保存されているデータはすべて上書きされます。先に念のためエクスポートしておくことをおすすめします。</p>
+        <input type="file" id="import-file" accept=".json">
+        <button class="danger" id="import-btn">インポートする(現在のデータを上書き)</button>
+      </div>
+    `;
+
+    document.getElementById("export-btn").onclick = () => {
+      const json = JSON.stringify(AppState.state, null, 2);
+      const today = todayStr().replace(/-/g, "");
+      const blob = new Blob([json], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `bookstore_backup_${today}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      Util.toast("エクスポートしました", "success");
+    };
+
+    document.getElementById("import-btn").onclick = async () => {
+      const fileInput = document.getElementById("import-file");
+      if (!fileInput.files.length) { Util.toast("JSONファイルを選択してください", "warning"); return; }
+      const ok = window.confirm("現在保存されているデータはすべて上書きされます。よろしいですか?");
+      if (!ok) return;
+      try {
+        const text = await fileInput.files[0].text();
+        const parsed = JSON.parse(text);
+        if (!parsed || !parsed.stores || !parsed.books) {
+          throw new Error("このファイルはバックアップ形式として認識できませんでした");
+        }
+        AppState.state = parsed;
+        await persistState();
+        Util.toast("インポートしました。画面を再読み込みします", "success");
+        setTimeout(() => location.reload(), 800);
+      } catch (e) {
+        Util.toast("インポートに失敗しました: " + e.message, "error");
+      }
+    };
+  },
+};
+
+
+// ---- 18b_page_transfer.js ----
+const PageTransfer = {
+  fromStoreId: null,
+  toStoreId: null,
+  selectedBook: null, // { isbn, title, availableQty }
+
+  async render(root) {
+    const currentStoreId = StoreState.currentStoreId;
+    if (!this.fromStoreId) this.fromStoreId = currentStoreId;
+    const stores = StoreState.stores;
+    if (!this.toStoreId || this.toStoreId === this.fromStoreId) {
+      const other = stores.find((s) => s.id !== this.fromStoreId);
+      this.toStoreId = other ? other.id : null;
+    }
+    this.selectedBook = null;
+
+    root.innerHTML = `
+      <h1>店舗間移動</h1>
+      <p class="subtitle">ある店舗の在庫を、卸会社・仕入形態・返品期限などの情報を保ったまま、別の店舗へ移動します。</p>
+
+      ${stores.length < 2 ? `
+        <div class="card"><p class="empty-msg">店舗が1つしかないため、店舗間移動は使えません。先に「マスタ管理」で店舗を追加してください。</p></div>
+      ` : `
+        <div class="card">
+          <h2 style="margin-top:0;">移動する</h2>
+          <div class="grid-2">
+            <div class="form-row">
+              <label>移動元店舗</label>
+              <select id="tr-from-store">
+                ${stores.map((s) => `<option value="${s.id}" ${s.id === this.fromStoreId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`).join("")}
+              </select>
+            </div>
+            <div class="form-row">
+              <label>移動先店舗</label>
+              <select id="tr-to-store">
+                ${stores.map((s) => `<option value="${s.id}" ${s.id === this.toStoreId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`).join("")}
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <label>移動する書籍を検索(移動元店舗の在庫から選択)</label>
+            <input type="text" id="tr-search-input" placeholder="書名・著者・出版社・ISBN">
+          </div>
+          <div id="tr-search-result"></div>
+
+          <div id="tr-selected-book-area" style="display:none; margin-top:14px;">
+            <div class="grid-2">
+              <div class="form-row"><label>選択中の書籍</label><input type="text" id="tr-selected-title" readonly></div>
+              <div class="form-row"><label>移動元の在庫数</label><input type="text" id="tr-available-qty" readonly></div>
+              <div class="form-row"><label>移動数量</label><input type="number" id="tr-quantity" value="1" min="1"></div>
+              <div class="form-row"><label>移動日</label><input type="date" id="tr-date" value="${Util.todayStr()}"></div>
+            </div>
+            <div class="form-row"><label>備考(任意)</label><input type="text" id="tr-note"></div>
+            <button id="tr-submit-btn">この内容で移動する</button>
+            <button class="secondary" id="tr-cancel-btn">選択解除</button>
+          </div>
+        </div>
+      `}
+
+      <div class="card">
+        <h2 style="margin-top:0;">移動履歴(${Util.escapeHtml(StoreState.getCurrentStore().name)} が関わるもの)</h2>
+        <div id="tr-history"><p class="loading">読み込み中...</p></div>
+      </div>
+    `;
+
+    if (stores.length >= 2) {
+      document.getElementById("tr-from-store").addEventListener("change", (e) => {
+        this.fromStoreId = parseInt(e.target.value, 10);
+        this.render(root);
+      });
+      document.getElementById("tr-to-store").addEventListener("change", (e) => {
+        this.toStoreId = parseInt(e.target.value, 10);
+      });
+
+      const doSearch = async () => {
+        const q = document.getElementById("tr-search-input").value;
+        const items = await Api.get(`/api/stores/${this.fromStoreId}/stock?q=${encodeURIComponent(q)}`);
+        document.getElementById("tr-search-result").innerHTML = `
+          <table style="margin-top:8px;">
+            <thead><tr><th>書名</th><th>著者</th><th>在庫数</th><th></th></tr></thead>
+            <tbody>${items.length ? items.map((it) => `
+              <tr>
+                <td>${Util.escapeHtml(it.title || it.isbn)}</td>
+                <td>${Util.escapeHtml(it.author || "")}</td>
+                <td>${it.total_quantity}</td>
+                <td><button class="small" id="tr-pick-${cssId(it.isbn)}">選択</button></td>
+              </tr>
+            `).join("") : '<tr><td colspan="4" class="empty-msg">移動元店舗にはこの条件に合う在庫がありません</td></tr>'}</tbody>
+          </table>
+        `;
+        items.forEach((it) => {
+          const btn = document.getElementById(`tr-pick-${cssId(it.isbn)}`);
+          if (btn) {
+            btn.onclick = () => {
+              this.selectedBook = { isbn: it.isbn, title: it.title, availableQty: it.total_quantity };
+              this.showSelectedBook();
+            };
+          }
+        });
+      };
+      document.getElementById("tr-search-input").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") doSearch();
+      });
+      document.getElementById("tr-search-input").addEventListener("input", () => doSearch());
+      doSearch();
+
+      document.getElementById("tr-cancel-btn").onclick = () => {
+        this.selectedBook = null;
+        document.getElementById("tr-selected-book-area").style.display = "none";
+      };
+      document.getElementById("tr-submit-btn").onclick = () => this.submit();
+    }
+
+    await this.renderHistory();
+  },
+
+  showSelectedBook() {
+    const area = document.getElementById("tr-selected-book-area");
+    area.style.display = "";
+    document.getElementById("tr-selected-title").value = this.selectedBook.title || this.selectedBook.isbn;
+    document.getElementById("tr-available-qty").value = `${this.selectedBook.availableQty}冊`;
+    const qtyField = document.getElementById("tr-quantity");
+    qtyField.value = 1;
+    qtyField.max = this.selectedBook.availableQty;
+    qtyField.focus();
+  },
+
+  async renderHistory() {
+    const el = document.getElementById("tr-history");
+    try {
+      const history = await Api.get(`/api/transfers/history?store_id=${StoreState.currentStoreId}`);
+      el.innerHTML = `
+        <table>
+          <thead><tr><th>移動日</th><th>書名</th><th>移動元</th><th>移動先</th><th>数量</th><th>備考</th></tr></thead>
+          <tbody>
+            ${history.length ? history.map((h) => `
+              <tr>
+                <td>${Util.fmtDate(h.transfer_date)}</td>
+                <td>${Util.escapeHtml(h.title || h.isbn)}</td>
+                <td>${Util.escapeHtml(h.from_store_name || "-")}</td>
+                <td>${Util.escapeHtml(h.to_store_name || "-")}</td>
+                <td>${h.quantity}</td>
+                <td>${Util.escapeHtml(h.note || "")}</td>
+              </tr>
+            `).join("") : '<tr><td colspan="6" class="empty-msg">移動履歴はありません</td></tr>'}
+          </tbody>
+        </table>
+      `;
+    } catch (e) {
+      el.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
+    }
+  },
+
+  async submit() {
+    if (!this.selectedBook) {
+      Util.toast("移動する書籍を選択してください", "warning");
+      return;
+    }
+    if (this.fromStoreId === this.toStoreId) {
+      Util.toast("移動元と移動先には別の店舗を指定してください", "error");
+      return;
+    }
+    const quantity = parseInt(document.getElementById("tr-quantity").value || "0", 10);
+    if (!quantity || quantity <= 0) {
+      Util.toast("数量は1以上を入力してください", "error");
+      return;
+    }
+    try {
+      const rec = await Api.post("/api/transfers", {
+        isbn: this.selectedBook.isbn,
+        from_store_id: this.fromStoreId,
+        to_store_id: this.toStoreId,
+        quantity,
+        transfer_date: document.getElementById("tr-date").value || null,
+        note: document.getElementById("tr-note").value,
+      });
+      Util.toast(`「${rec.title || rec.isbn}」を${rec.from_store_name}から${rec.to_store_name}へ${rec.quantity}冊移動しました`, "success");
+      this.selectedBook = null;
+      this.render(document.getElementById("app"));
+    } catch (e) {
+      Util.toast("移動に失敗しました: " + e.message, "error");
+    }
+  },
+};
+
+
+// ---- 19_router.js ----
+const Router = {
+  routes: {
+    "/dashboard": PageDashboard,
+    "/stock": PageStock,
+    "/receive": PageReceive,
+    "/import": PageImport,
+    "/sales": PageSales,
+    "/returns": PageReturns,
+    "/stocktake": PageStocktake,
+    "/masters": PageMasters,
+    "/transfer": PageTransfer,
+    "/data": PageData,
+  },
+
+  parseHash() {
+    let hash = location.hash.replace(/^#/, "");
+    if (!hash) hash = "/dashboard";
+    const [path, queryStr] = hash.split("?");
+    const params = {};
+    if (queryStr) {
+      new URLSearchParams(queryStr).forEach((v, k) => { params[k] = v; });
+    }
+    return { path, params };
+  },
+
+  navigate(path, params) {
+    let hash = "#" + path;
+    if (params && Object.keys(params).length) {
+      hash += "?" + new URLSearchParams(params).toString();
+    }
+    location.hash = hash;
+  },
+
+  async handle() {
+    const { path, params } = this.parseHash();
+    const page = this.routes[path] || PageDashboard;
+
+    document.querySelectorAll(".topnav a").forEach((a) => {
+      a.classList.toggle("active", a.getAttribute("data-route") === path);
+    });
+
+    const root = document.getElementById("app");
+    try {
+      await page.render(root, params);
+    } catch (e) {
+      root.innerHTML = `<p class="error-msg">画面の表示に失敗しました: ${Util.escapeHtml(e.message)}</p>`;
+      console.error(e);
+    }
+  },
+
+  reload() {
+    this.handle();
+  },
+
+  init() {
+    window.addEventListener("hashchange", () => this.handle());
+    this.handle();
+  },
+};
+
+
+// ---- 20_main.js ----
+(async function () {
+  try {
+    await ensureStateLoaded();
+    await StoreState.init();
+  } catch (e) {
+    document.getElementById("app").innerHTML =
+      `<p class="error-msg">初期化に失敗しました: ${Util.escapeHtml(e.message)}</p>`;
+    console.error(e);
+    return;
+  }
+  Router.init();
+  if (AppState.repairNotice) {
+    Util.toast(AppState.repairNotice, "warning");
+  }
+})();
+
+</script>
+</body>
+</html>
