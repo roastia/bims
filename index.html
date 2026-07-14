@@ -109,6 +109,25 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
 
 .form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
 .form-row label { font-size: 0.85em; color: var(--text-muted); font-weight: 600; }
+
+.field-required-badge,
+.field-optional-badge {
+  display: inline-block;
+  font-size: 0.72em;
+  font-weight: 700;
+  border-radius: 3px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.field-required-badge {
+  background: #f8d7da;
+  color: var(--danger);
+}
+.field-optional-badge {
+  background: #eef1f5;
+  color: var(--text-muted);
+}
 .form-inline { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
 
 .barcode-box {
@@ -2830,7 +2849,7 @@ const PageStock = {
               <th>著者</th>
               <th>出版社</th>
               <th>卸会社</th>
-              <th class="num">金額</th>
+              <th class="num">本体価格(税別)</th>
               <th>店舗</th>
               <th class="num">店内在庫</th>
               <th class="num">倉庫在庫</th>
@@ -3163,33 +3182,33 @@ const PageReceive = {
         <p class="barcode-hint">ここで設定した内容は、変更するまでこのあとスキャンする本すべてに引き継がれます。同じ卸から届いた荷物をまとめて登録するときは、最初に1回設定するだけで大丈夫です。</p>
         <div class="grid-2">
           <div class="form-row">
-            <label>入荷先店舗</label>
+            <label>入荷先店舗<span class="field-required-badge">必須</span></label>
             <select id="batch-store">${storeOptions}</select>
           </div>
           <div class="form-row">
-            <label>卸会社</label>
+            <label>卸会社<span class="field-optional-badge">任意</span></label>
             <select id="batch-wholesaler">
               <option value="" ${!this.batchSettings.wholesalerId ? "selected" : ""}>(指定なし)</option>
               ${wholesalers.map((w) => `<option value="${w.id}" ${String(w.id) === String(this.batchSettings.wholesalerId) ? "selected" : ""}>${Util.escapeHtml(w.name)}</option>`).join("")}
             </select>
           </div>
           <div class="form-row">
-            <label>入荷形態</label>
+            <label>入荷形態<span class="field-required-badge">必須</span></label>
             <select id="batch-purchase-type">
               <option value="buy" ${this.batchSettings.purchaseType === "buy" ? "selected" : ""}>買切</option>
               <option value="consignment" ${this.batchSettings.purchaseType === "consignment" ? "selected" : ""}>委託</option>
             </select>
           </div>
           <div class="form-row" id="batch-deadline-row" style="display:${this.batchSettings.purchaseType === "consignment" ? "" : "none"};">
-            <label>返品期限(委託の場合)</label>
+            <label>返品期限(委託の場合)<span class="field-required-badge">必須</span></label>
             <input type="date" id="batch-deadline" value="${this.batchSettings.consignmentDeadline || ""}">
           </div>
           <div class="form-row">
-            <label>入荷日</label>
+            <label>入荷日<span class="field-required-badge">必須</span></label>
             <input type="date" id="batch-received-date" value="${this.batchSettings.receivedDate}">
           </div>
           <div class="form-row">
-            <label>保管場所</label>
+            <label>保管場所<span class="field-required-badge">必須</span></label>
             <select id="batch-location">
               <option value="floor" ${this.batchSettings.location !== "warehouse" ? "selected" : ""}>店内</option>
               <option value="warehouse" ${this.batchSettings.location === "warehouse" ? "selected" : ""}>倉庫</option>
@@ -3208,15 +3227,15 @@ const PageReceive = {
         <h2 style="margin-top:0;">スキャンした書籍</h2>
         <div class="grid-2">
           <div class="form-row"><label>ISBN</label><input type="text" id="f-isbn" readonly></div>
-          <div class="form-row"><label>書名</label><input type="text" id="f-title"></div>
-          <div class="form-row"><label>著者</label><input type="text" id="f-author"></div>
-          <div class="form-row"><label>出版社</label><input type="text" id="f-publisher"></div>
-          <div class="form-row"><label>本体価格(円)</label><input type="number" id="f-price"></div>
-          <div class="form-row"><label>分類(Cコード)</label><input type="text" id="f-classification" readonly></div>
-          <div class="form-row"><label>数量</label><input type="number" id="f-quantity" value="1" min="1"></div>
-          <div class="form-row"><label>入荷単価(任意・円)</label><input type="number" id="f-unit-cost" value="0"></div>
+          <div class="form-row"><label>書名<span class="field-required-badge">必須</span></label><input type="text" id="f-title"></div>
+          <div class="form-row"><label>著者<span class="field-optional-badge">任意</span></label><input type="text" id="f-author"></div>
+          <div class="form-row"><label>出版社<span class="field-optional-badge">任意</span></label><input type="text" id="f-publisher"></div>
+          <div class="form-row"><label>本体価格(円・税別)<span class="field-required-badge">必須</span></label><input type="number" id="f-price"></div>
+          <div class="form-row"><label>分類(Cコード)<span class="field-optional-badge">任意</span></label><input type="text" id="f-classification" readonly></div>
+          <div class="form-row"><label>数量<span class="field-required-badge">必須</span></label><input type="number" id="f-quantity" value="1" min="1"></div>
+          <div class="form-row"><label>入荷単価(円)<span class="field-optional-badge">任意</span></label><input type="number" id="f-unit-cost" value="0"></div>
         </div>
-        <div class="form-row"><label>備考(任意)</label><input type="text" id="f-note"></div>
+        <div class="form-row"><label>備考<span class="field-optional-badge">任意</span></label><input type="text" id="f-note"></div>
         <button id="submit-receive">この内容で登録して次へ</button>
         <button class="secondary" id="clear-form">この書籍をキャンセル</button>
       </div>
@@ -3384,13 +3403,23 @@ const PageReceive = {
       Util.toast("数量は1以上を入力してください", "error");
       return;
     }
+    const titleValue = document.getElementById("f-title").value.trim();
+    if (!titleValue) {
+      Util.toast("書名を入力してください", "error");
+      return;
+    }
+    const priceValue = parseInt(document.getElementById("f-price").value || "0", 10);
+    if (!priceValue || priceValue <= 0) {
+      Util.toast("本体価格(税別)を入力してください", "error");
+      return;
+    }
 
     const payload = {
       isbn: document.getElementById("f-isbn").value,
-      title: document.getElementById("f-title").value,
+      title: titleValue,
       author: document.getElementById("f-author").value,
       publisher: document.getElementById("f-publisher").value,
-      price: parseInt(document.getElementById("f-price").value || "0", 10),
+      price: priceValue,
       wholesaler_id: this.batchSettings.wholesalerId ? parseInt(this.batchSettings.wholesalerId, 10) : null,
       purchase_type: purchaseType,
       quantity,
@@ -4191,7 +4220,7 @@ const PageMasters = {
           <div class="form-row"><label>書名</label><input type="text" id="mb-title" value="${editBook ? Util.escapeHtml(editBook.title) : ""}"></div>
           <div class="form-row"><label>著者</label><input type="text" id="mb-author" value="${editBook ? Util.escapeHtml(editBook.author) : ""}"></div>
           <div class="form-row"><label>出版社</label><input type="text" id="mb-publisher" value="${editBook ? Util.escapeHtml(editBook.publisher) : ""}"></div>
-          <div class="form-row"><label>本体価格</label><input type="number" id="mb-price" value="${editBook ? editBook.price : ""}"></div>
+          <div class="form-row"><label>本体価格(円・税別)</label><input type="number" id="mb-price" value="${editBook ? editBook.price : ""}"></div>
           <div class="form-row"><label>分類(Cコード・4桁)</label><input type="text" id="mb-ccode" value="${editBook ? Util.escapeHtml(editBook.c_code || "") : ""}"></div>
           <div class="form-row"><label>分類表示テキスト</label><input type="text" id="mb-classification" value="${editBook ? Util.escapeHtml(editBook.classification_text || "") : ""}"></div>
           <div class="form-row"><label>雑誌コード(任意)</label><input type="text" id="mb-magazine" value="${editBook ? Util.escapeHtml(editBook.magazine_code || "") : ""}"></div>
@@ -4209,7 +4238,7 @@ const PageMasters = {
       document.getElementById("book-search-result").innerHTML = `
         <table class="masters-table" style="margin-top:10px;">
           <colgroup><col style="width:16%"><col style="width:26%"><col style="width:16%"><col style="width:16%"><col style="width:10%"><col style="width:180px"></colgroup>
-          <thead><tr><th>ISBN</th><th>書名</th><th>著者</th><th>出版社</th><th>価格</th><th></th></tr></thead>
+          <thead><tr><th>ISBN</th><th>書名</th><th>著者</th><th>出版社</th><th>本体価格(税別)</th><th></th></tr></thead>
           <tbody>${books.length ? books.map((b) => `
             <tr>
               <td>${Util.escapeHtml(b.isbn)}</td><td>${Util.escapeHtml(b.title)}</td>
