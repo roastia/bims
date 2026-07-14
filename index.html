@@ -1601,7 +1601,7 @@ const Crud = {
         storeId: req.toStoreId, isbn: req.isbn, wholesalerId: lot.wholesalerId,
         purchaseType: lot.purchaseType, quantity: take, initialQuantity: take,
         // 移動先での「入荷日」は元ロットの仕入日ではなく、実際に移動した日(transferDate)を使う
-        unitCost: lot.unitCost, receivedDate: transferDate, consignmentDeadline: lot.consignmentDeadline,
+        unitCost: lot.unitCost, price: lot.price || 0, receivedDate: transferDate, consignmentDeadline: lot.consignmentDeadline,
         location: toLocation,
         status: "active", source: "transfer",
         note: (lot.note ? lot.note + " / " : "") + (sameStore ? "エリア移動で入荷" : "店舗間移動で入荷"),
