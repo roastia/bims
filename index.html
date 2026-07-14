@@ -139,6 +139,8 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
 .badge-buy { background: #dbe9dd; color: var(--success); }
 .badge-consignment { background: #fbe6d4; color: var(--accent); }
 .badge-adjustment { background: #eee; color: #666; }
+.badge-floor { background: #dce8f5; color: var(--primary); }
+.badge-warehouse { background: #ece3f5; color: #6a3fa0; }
 .badge-danger { background: #f8d7da; color: var(--danger); }
 .badge-warning { background: #fff3cd; color: var(--warning); }
 
@@ -282,6 +284,28 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
   margin-top: 4px;
 }
 
+.masters-table {
+  table-layout: fixed;
+}
+.masters-table th,
+.masters-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.masters-table td.wrap-cell {
+  white-space: normal;
+}
+.masters-table td input[type="text"],
+.masters-table td input[type="number"] {
+  width: 100%;
+  box-sizing: border-box;
+}
+.masters-table .actions-cell {
+  overflow: visible;
+  white-space: normal;
+}
+
 </style>
 </head>
 <body>
@@ -293,7 +317,7 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
     <a href="#/dashboard" data-route="/dashboard">ダッシュボード</a>
     <a href="#/stock" data-route="/stock">在庫一覧</a>
     <a href="#/receive" data-route="/receive">入荷登録</a>
-    <a href="#/transfer" data-route="/transfer">店舗間移動</a>
+    <a href="#/transfer" data-route="/transfer">在庫移動</a>
     <a href="#/import" data-route="/import">CSV取込</a>
     <a href="#/sales" data-route="/sales">売上履歴</a>
     <a href="#/returns" data-route="/returns">返品管理</a>
@@ -655,6 +679,7 @@ const Crud = {
       unitCost: req.unitCost || 0,
       receivedDate: req.receivedDate || todayStr(),
       consignmentDeadline: req.purchaseType === "consignment" ? (req.consignmentDeadline || null) : null,
+      location: req.location === "warehouse" ? "warehouse" : "floor",
       status: "active", source: "manual", note: req.note || "",
     };
     state.stockLots.push(lot);
@@ -677,6 +702,8 @@ const Crud = {
       }
       const lotList = byIsbn[isbn];
       const totalQty = lotList.reduce((s, l) => s + l.quantity, 0);
+      const floorQty = lotList.filter((l) => (l.location || "floor") === "floor").reduce((s, l) => s + l.quantity, 0);
+      const warehouseQty = lotList.filter((l) => l.location === "warehouse").reduce((s, l) => s + l.quantity, 0);
       const tagIds = state.bookTags.filter((bt) => bt.storeId === storeId && bt.isbn === isbn).map((bt) => bt.tagId);
       const tags = state.tags.filter((t) => tagIds.includes(t.id)).map((t) => t.name);
       const lotOuts = lotList.map((l) => {
@@ -685,12 +712,13 @@ const Crud = {
           id: l.id, isbn: l.isbn, wholesalerId: l.wholesalerId, wholesalerName: w ? w.name : null,
           purchaseType: l.purchaseType, quantity: l.quantity, initialQuantity: l.initialQuantity,
           unitCost: l.unitCost, receivedDate: l.receivedDate, consignmentDeadline: l.consignmentDeadline,
+          location: l.location || "floor",
           status: l.status, note: l.note,
         };
       });
       results.push({
         isbn, title: book.title, author: book.author, publisher: book.publisher, price: book.price,
-        totalQuantity: totalQty, tags, lots: lotOuts,
+        totalQuantity: totalQty, floorQuantity: floorQty, warehouseQuantity: warehouseQty, tags, lots: lotOuts,
       });
     }
     results.sort((a, b) => b.totalQuantity - a.totalQuantity || (a.title || a.isbn).localeCompare(b.title || b.isbn, "ja"));
@@ -698,8 +726,10 @@ const Crud = {
   },
 
   _lotSortKey(lot) {
-    if (lot.purchaseType === "consignment" && lot.consignmentDeadline) return [0, lot.consignmentDeadline];
-    return [1, lot.receivedDate || "9999-99-99"];
+    // 販売・返品はまず店内在庫から引き当て、倉庫在庫はその後に回す
+    const locTier = (lot.location || "floor") === "floor" ? 0 : 1;
+    if (lot.purchaseType === "consignment" && lot.consignmentDeadline) return [locTier, 0, lot.consignmentDeadline];
+    return [locTier, 1, lot.receivedDate || "9999-99-99"];
   },
 
   allocateSale(state, storeId, isbn, quantity, saleDate, unitPrice, importBatch) {
@@ -711,7 +741,8 @@ const Crud = {
       .sort((a, b) => {
         const ka = this._lotSortKey(a), kb = this._lotSortKey(b);
         if (ka[0] !== kb[0]) return ka[0] - kb[0];
-        return String(ka[1]).localeCompare(String(kb[1]));
+        if (ka[1] !== kb[1]) return ka[1] - kb[1];
+        return String(ka[2]).localeCompare(String(kb[2]));
       });
 
     const created = [];
@@ -755,6 +786,7 @@ const Crud = {
         lotId: lot.id, isbn: lot.isbn, title: book ? book.title : "",
         wholesalerId: lot.wholesalerId, wholesalerName: w ? w.name : null,
         quantity: lot.quantity, receivedDate: lot.receivedDate, consignmentDeadline: lot.consignmentDeadline,
+        location: lot.location || "floor",
         daysUntilDeadline: lot.consignmentDeadline ? daysBetween(today, lot.consignmentDeadline) : null,
       };
     });
@@ -866,9 +898,11 @@ const Crud = {
   },
 
   transferStock(state, req) {
-    // req: { isbn, fromStoreId, toStoreId, quantity, transferDate, note }
-    if (req.fromStoreId === req.toStoreId) {
-      throw new Error("移動元と移動先には別の店舗を指定してください");
+    // req: { isbn, fromStoreId, toStoreId, fromLocation, toLocation, quantity, transferDate, note }
+    const fromLocation = req.fromLocation === "warehouse" ? "warehouse" : "floor";
+    const toLocation = req.toLocation === "warehouse" ? "warehouse" : "floor";
+    if (req.fromStoreId === req.toStoreId && fromLocation === toLocation) {
+      throw new Error("移動元と移動先が同じです。別の店舗、または店内/倉庫のエリアを変えて指定してください");
     }
     if (!req.quantity || req.quantity <= 0) {
       throw new Error("数量は1以上を指定してください");
@@ -877,12 +911,13 @@ const Crud = {
     if (!book) throw new Error("書誌が見つかりません");
 
     const lots = state.stockLots
-      .filter((l) => l.storeId === req.fromStoreId && l.isbn === req.isbn && l.quantity > 0 && l.status === "active")
+      .filter((l) => l.storeId === req.fromStoreId && l.isbn === req.isbn && l.quantity > 0 && l.status === "active" && (l.location || "floor") === fromLocation)
       .slice()
       .sort((a, b) => {
         const ka = this._lotSortKey(a), kb = this._lotSortKey(b);
         if (ka[0] !== kb[0]) return ka[0] - kb[0];
-        return String(ka[1]).localeCompare(String(kb[1]));
+        if (ka[1] !== kb[1]) return ka[1] - kb[1];
+        return String(ka[2]).localeCompare(String(kb[2]));
       });
 
     const availableTotal = lots.reduce((s, l) => s + l.quantity, 0);
@@ -893,6 +928,7 @@ const Crud = {
     let remaining = req.quantity;
     const transferDate = req.transferDate || todayStr();
     const movedLotPairs = [];
+    const sameStore = req.fromStoreId === req.toStoreId;
     for (const lot of lots) {
       if (remaining <= 0) break;
       const take = Math.min(lot.quantity, remaining);
@@ -904,8 +940,9 @@ const Crud = {
         storeId: req.toStoreId, isbn: req.isbn, wholesalerId: lot.wholesalerId,
         purchaseType: lot.purchaseType, quantity: take, initialQuantity: take,
         unitCost: lot.unitCost, receivedDate: lot.receivedDate, consignmentDeadline: lot.consignmentDeadline,
+        location: toLocation,
         status: "active", source: "transfer",
-        note: (lot.note ? lot.note + " / " : "") + "店舗間移動で受入",
+        note: (lot.note ? lot.note + " / " : "") + (sameStore ? "エリア移動で受入" : "店舗間移動で受入"),
       };
       state.stockLots.push(newLot);
       movedLotPairs.push({ fromLotId: lot.id, toLotId: newLot.id, quantity: take });
@@ -914,6 +951,7 @@ const Crud = {
 
     const rec = {
       id: state.nextId.transfer++, isbn: req.isbn, fromStoreId: req.fromStoreId, toStoreId: req.toStoreId,
+      fromLocation, toLocation,
       quantity: req.quantity, transferDate, note: req.note || "", lotPairs: movedLotPairs,
     };
     state.transfers.push(rec);
@@ -967,6 +1005,9 @@ const Crud = {
         const priceRaw = (row.price || row.価格 || "").trim();
         const price = priceRaw ? parseInt(priceRaw, 10) : null;
 
+        const locationRaw = (row.location || row.保管場所 || "").trim();
+        const location = (locationRaw === "warehouse" || locationRaw === "倉庫") ? "warehouse" : "floor";
+
         await this.getOrCreateBook(state, isbn, {
           title: (row.title || row.書名 || "").trim(),
           author: (row.author || row.著者 || "").trim(),
@@ -976,7 +1017,7 @@ const Crud = {
 
         state.stockLots.push({
           id: state.nextId.stockLot++, storeId, isbn, wholesalerId, purchaseType,
-          quantity, initialQuantity: quantity, unitCost, receivedDate, consignmentDeadline,
+          quantity, initialQuantity: quantity, unitCost, receivedDate, consignmentDeadline, location,
           status: "active", source: "csv_import", note: "",
         });
         success++;
@@ -1066,6 +1107,13 @@ function repairState(state) {
   fixCounter("tag", state.tags);
   fixCounter("bookTag", state.bookTags);
   fixCounter("stockLot", state.stockLots);
+  // 保管場所(店内/倉庫)フィールドが無い旧データはすべて「店内」として補完する
+  state.stockLots.forEach((l) => {
+    if (l.location !== "floor" && l.location !== "warehouse") {
+      l.location = "floor";
+      repaired = true;
+    }
+  });
   fixCounter("sale", state.sales);
   fixCounter("returnRec", state.returns);
   fixCounter("stocktake", state.stocktakeEntries);
@@ -1106,19 +1154,23 @@ function mapLot(l) {
     id: l.id, isbn: l.isbn, wholesaler_id: l.wholesalerId, wholesaler_name: l.wholesalerName,
     purchase_type: l.purchaseType, quantity: l.quantity, initial_quantity: l.initialQuantity,
     unit_cost: l.unitCost, received_date: l.receivedDate, consignment_deadline: l.consignmentDeadline,
+    location: l.location || "floor",
     status: l.status, note: l.note,
   };
 }
 function mapStockItem(item) {
   return {
     isbn: item.isbn, title: item.title, author: item.author, publisher: item.publisher, price: item.price,
-    total_quantity: item.totalQuantity, tags: item.tags, lots: item.lots.map(mapLot),
+    total_quantity: item.totalQuantity,
+    floor_quantity: item.floorQuantity, warehouse_quantity: item.warehouseQuantity,
+    tags: item.tags, lots: item.lots.map(mapLot),
   };
 }
 function mapReturnCandidate(c) {
   return {
     lot_id: c.lotId, isbn: c.isbn, title: c.title, wholesaler_id: c.wholesalerId, wholesaler_name: c.wholesalerName,
     quantity: c.quantity, received_date: c.receivedDate, consignment_deadline: c.consignmentDeadline,
+    location: c.location || "floor",
     days_until_deadline: c.daysUntilDeadline,
   };
 }
@@ -1343,6 +1395,7 @@ const LocalApi = {
         quantity: body.quantity, unitCost: body.unit_cost || 0, receivedDate: body.received_date || null,
         consignmentDeadline: body.consignment_deadline || null, note: body.note || "",
         title: body.title, author: body.author, publisher: body.publisher, price: body.price,
+        location: body.location === "warehouse" ? "warehouse" : "floor",
       };
       const lot = await Crud.receiveStock(state, storeId, req);
       await persistState();
@@ -1415,6 +1468,7 @@ const LocalApi = {
       try {
         rec = Crud.transferStock(state, {
           isbn: body.isbn, fromStoreId: body.from_store_id, toStoreId: body.to_store_id,
+          fromLocation: body.from_location, toLocation: body.to_location,
           quantity: body.quantity, transferDate: body.transfer_date || null, note: body.note || "",
         });
       } catch (e) {
@@ -1428,6 +1482,7 @@ const LocalApi = {
         id: rec.id, isbn: rec.isbn, title: book ? book.title : "",
         from_store_id: rec.fromStoreId, from_store_name: fromStore ? fromStore.name : null,
         to_store_id: rec.toStoreId, to_store_name: toStore ? toStore.name : null,
+        from_location: rec.fromLocation, to_location: rec.toLocation,
         quantity: rec.quantity, transfer_date: rec.transferDate, note: rec.note,
       };
     }
@@ -1443,6 +1498,7 @@ const LocalApi = {
           id: t.id, isbn: t.isbn, title: book ? book.title : "",
           from_store_id: t.fromStoreId, from_store_name: fromStore ? fromStore.name : null,
           to_store_id: t.toStoreId, to_store_name: toStore ? toStore.name : null,
+          from_location: t.fromLocation || "floor", to_location: t.toLocation || "floor",
           quantity: t.quantity, transfer_date: t.transferDate, note: t.note,
         };
       });
@@ -1534,6 +1590,12 @@ const Util = {
     if (t === "buy") return "badge badge-buy";
     if (t === "consignment") return "badge badge-consignment";
     return "badge badge-adjustment";
+  },
+  locationLabel(loc) {
+    return loc === "warehouse" ? "倉庫" : "店内";
+  },
+  locationBadgeClass(loc) {
+    return loc === "warehouse" ? "badge badge-warehouse" : "badge badge-floor";
   },
   toast(message, kind) {
     const container = document.getElementById("toast-container");
@@ -1742,7 +1804,8 @@ const PageStock = {
               <th>卸会社</th>
               <th class="num">金額</th>
               <th>店舗</th>
-              <th class="num">在庫数</th>
+              <th class="num">店内在庫</th>
+              <th class="num">倉庫在庫</th>
               <th>タグ</th>
               <th></th>
             </tr>
@@ -1821,6 +1884,7 @@ const PageStock = {
     const lotRows = item.lots.map((lot) => `
       <tr>
         <td><span class="${Util.purchaseTypeBadgeClass(lot.purchase_type)}">${Util.purchaseTypeLabel(lot.purchase_type)}</span></td>
+        <td><span class="${Util.locationBadgeClass(lot.location)}">${Util.locationLabel(lot.location)}</span></td>
         <td>${Util.escapeHtml(lot.wholesaler_name || "-")}</td>
         <td>${lot.quantity}</td>
         <td>${Util.fmtDate(lot.received_date)}</td>
@@ -1841,12 +1905,13 @@ const PageStock = {
         <td class="stock-ellipsis" title="${Util.escapeHtml(wholesalerText)}">${Util.escapeHtml(wholesalerText)}</td>
         <td class="num">${priceText}</td>
         <td class="stock-ellipsis">${Util.escapeHtml(storeName)}</td>
-        <td class="num">${item.total_quantity}</td>
+        <td class="num">${item.floor_quantity}</td>
+        <td class="num">${item.warehouse_quantity}</td>
         <td class="stock-ellipsis" title="${Util.escapeHtml(tagsText)}">${Util.escapeHtml(tagsText)}</td>
         <td><button class="small secondary" id="toggle-${id}">詳細</button></td>
       </tr>
       <tr class="stock-detail-row" id="detail-${id}" style="display:none;">
-        <td colspan="9">
+        <td colspan="10">
           <div class="stock-detail-inner">
             <div style="color:var(--text-muted); font-size:0.85em; margin-bottom:8px;">
               ISBN: ${Util.escapeHtml(item.isbn)}
@@ -1859,8 +1924,8 @@ const PageStock = {
               <button class="small" id="tagadd-${id}">タグ追加</button>
             </div>
             <table>
-              <thead><tr><th>仕入形態</th><th>卸会社</th><th>数量</th><th>入荷日</th><th>返品期限</th><th>備考</th></tr></thead>
-              <tbody>${lotRows || '<tr><td colspan="6" class="empty-msg">在庫ロットがありません</td></tr>'}</tbody>
+              <thead><tr><th>仕入形態</th><th>保管場所</th><th>卸会社</th><th>数量</th><th>入荷日</th><th>返品期限</th><th>備考</th></tr></thead>
+              <tbody>${lotRows || '<tr><td colspan="7" class="empty-msg">在庫ロットがありません</td></tr>'}</tbody>
             </table>
           </div>
         </td>
@@ -1882,6 +1947,7 @@ const PageReceive = {
     purchaseType: "buy",
     consignmentDeadline: "",
     receivedDate: null,
+    location: "floor",
   },
   sessionLog: [], // このページを開いてから登録した項目の一覧(画面上の確認用。ページ再読み込みで消える)
 
@@ -1924,6 +1990,13 @@ const PageReceive = {
             <label>入荷日</label>
             <input type="date" id="batch-received-date" value="${this.batchSettings.receivedDate}">
           </div>
+          <div class="form-row">
+            <label>保管場所</label>
+            <select id="batch-location">
+              <option value="floor" ${this.batchSettings.location !== "warehouse" ? "selected" : ""}>店内</option>
+              <option value="warehouse" ${this.batchSettings.location === "warehouse" ? "selected" : ""}>倉庫</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -1953,7 +2026,7 @@ const PageReceive = {
       <div class="card">
         <h2 style="margin-top:0;">今回の入荷登録ログ</h2>
         <table>
-          <thead><tr><th>書名</th><th>卸会社</th><th>仕入形態</th><th>数量</th><th>時刻</th></tr></thead>
+          <thead><tr><th>書名</th><th>卸会社</th><th>仕入形態</th><th>保管場所</th><th>数量</th><th>時刻</th></tr></thead>
           <tbody id="session-log-body">${this.renderLogRows()}</tbody>
         </table>
       </div>
@@ -1972,6 +2045,9 @@ const PageReceive = {
     document.getElementById("batch-received-date").addEventListener("change", (e) => {
       this.batchSettings.receivedDate = e.target.value;
     });
+    document.getElementById("batch-location").addEventListener("change", (e) => {
+      this.batchSettings.location = e.target.value;
+    });
 
     const scanInput = document.getElementById("scan-input");
     scanInput.addEventListener("keydown", async (e) => {
@@ -1988,13 +2064,14 @@ const PageReceive = {
 
   renderLogRows() {
     if (this.sessionLog.length === 0) {
-      return `<tr><td colspan="5" class="empty-msg">まだ登録はありません</td></tr>`;
+      return `<tr><td colspan="6" class="empty-msg">まだ登録はありません</td></tr>`;
     }
     return this.sessionLog.slice().reverse().map((l) => `
       <tr>
         <td>${Util.escapeHtml(l.title || l.isbn)}</td>
         <td>${Util.escapeHtml(l.wholesalerName || "-")}</td>
         <td><span class="${Util.purchaseTypeBadgeClass(l.purchaseType)}">${Util.purchaseTypeLabel(l.purchaseType)}</span></td>
+        <td><span class="${Util.locationBadgeClass(l.location)}">${Util.locationLabel(l.location)}</span></td>
         <td>${l.quantity}</td>
         <td>${l.time}</td>
       </tr>
@@ -2096,6 +2173,7 @@ const PageReceive = {
       unit_cost: parseInt(document.getElementById("f-unit-cost").value || "0", 10),
       received_date: this.batchSettings.receivedDate || null,
       consignment_deadline: purchaseType === "consignment" ? deadline : null,
+      location: this.batchSettings.location,
       note: document.getElementById("f-note").value,
     };
 
@@ -2108,6 +2186,7 @@ const PageReceive = {
         quantity,
         wholesalerName: lot.wholesaler_name,
         purchaseType,
+        location: lot.location,
         time: new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }),
       });
       const logBody = document.getElementById("session-log-body");
@@ -2122,9 +2201,9 @@ const PageReceive = {
 
 // ---- 13_page_importCsv.js ----
 const PURCHASE_CSV_TEMPLATE =
-  "isbn,title,author,publisher,price,wholesaler_name,purchase_type,quantity,unit_cost,received_date,consignment_deadline\n" +
-  "9784000000000,サンプル書名,サンプル著者,サンプル出版社,1500,日販,買切,10,1050,2026-07-01,\n" +
-  "9784000000001,サンプル書名2,サンプル著者2,サンプル出版社2,1200,トーハン,委託,5,900,2026-07-01,2026-09-30\n";
+  "isbn,title,author,publisher,price,wholesaler_name,purchase_type,quantity,unit_cost,received_date,consignment_deadline,location\n" +
+  "9784000000000,サンプル書名,サンプル著者,サンプル出版社,1500,日販,買切,10,1050,2026-07-01,,店内\n" +
+  "9784000000001,サンプル書名2,サンプル著者2,サンプル出版社2,1200,トーハン,委託,5,900,2026-07-01,2026-09-30,倉庫\n";
 
 const SALES_CSV_TEMPLATE =
   "isbn,quantity,sale_date,unit_price\n" +
@@ -2179,7 +2258,7 @@ const PageImport = {
         <div class="card">
           <h2 style="margin-top:0;">入荷データCSV取込</h2>
           <p class="barcode-hint">「${Util.escapeHtml(StoreState.stores.find((s) => s.id === storeId).name)}」の在庫として取り込まれます。</p>
-          <p>列: <code>isbn, title, author, publisher, price, wholesaler_name, purchase_type(買切/委託), quantity, unit_cost, received_date, consignment_deadline</code></p>
+          <p>列: <code>isbn, title, author, publisher, price, wholesaler_name, purchase_type(買切/委託), quantity, unit_cost, received_date, consignment_deadline, location(店内/倉庫・省略時は店内)</code></p>
           <p><button class="small secondary" id="dl-purchase-template">テンプレートCSVをダウンロード</button></p>
           <div class="csv-dropzone" id="purchase-dropzone">
             <p class="csv-dropzone-badge">ドラッグ&ドロップ対応</p>
@@ -2573,7 +2652,8 @@ const PageMasters = {
     const stores = await Api.get("/api/stores");
     content.innerHTML = `
       <div class="card">
-        <table>
+        <table class="masters-table">
+          <colgroup><col style="width:38%"><col style="width:38%"><col style="width:180px"></colgroup>
           <thead><tr><th>店舗名</th><th>備考</th><th></th></tr></thead>
           <tbody>
             ${stores.map((s) => {
@@ -2582,7 +2662,7 @@ const PageMasters = {
                   <tr>
                     <td><input type="text" id="edit-store-name-${s.id}" value="${Util.escapeHtml(s.name)}"></td>
                     <td><input type="text" id="edit-store-note-${s.id}" value="${Util.escapeHtml(s.note || "")}"></td>
-                    <td>
+                    <td class="actions-cell">
                       <button class="small" id="save-store-${s.id}">保存</button>
                       <button class="small secondary" id="cancel-store-${s.id}">キャンセル</button>
                     </td>
@@ -2592,7 +2672,7 @@ const PageMasters = {
                 <tr>
                   <td>${Util.escapeHtml(s.name)}</td>
                   <td>${Util.escapeHtml(s.note || "")}</td>
-                  <td>
+                  <td class="actions-cell">
                     <button class="small secondary" id="edit-store-btn-${s.id}">編集</button>
                     ${stores.length > 1 ? `<button class="small danger" id="delete-store-btn-${s.id}">削除</button>` : ""}
                   </td>
@@ -2679,7 +2759,8 @@ const PageMasters = {
     const wholesalers = await Api.get("/api/wholesalers");
     content.innerHTML = `
       <div class="card">
-        <table>
+        <table class="masters-table">
+          <colgroup><col style="width:26%"><col style="width:26%"><col style="width:26%"><col style="width:180px"></colgroup>
           <thead><tr><th>卸会社名</th><th>連絡先</th><th>備考</th><th></th></tr></thead>
           <tbody>
             ${wholesalers.map((w) => {
@@ -2689,7 +2770,7 @@ const PageMasters = {
                     <td><input type="text" id="edit-w-name-${w.id}" value="${Util.escapeHtml(w.name)}"></td>
                     <td><input type="text" id="edit-w-contact-${w.id}" value="${Util.escapeHtml(w.contact || "")}"></td>
                     <td><input type="text" id="edit-w-note-${w.id}" value="${Util.escapeHtml(w.note || "")}"></td>
-                    <td>
+                    <td class="actions-cell">
                       <button class="small" id="save-w-${w.id}">保存</button>
                       <button class="small secondary" id="cancel-w-${w.id}">キャンセル</button>
                     </td>
@@ -2700,7 +2781,7 @@ const PageMasters = {
                   <td>${Util.escapeHtml(w.name)}</td>
                   <td>${Util.escapeHtml(w.contact || "")}</td>
                   <td>${Util.escapeHtml(w.note || "")}</td>
-                  <td>
+                  <td class="actions-cell">
                     <button class="small secondary" id="edit-w-btn-${w.id}">編集</button>
                     <button class="small danger" id="delete-w-btn-${w.id}">削除</button>
                   </td>
@@ -2821,14 +2902,15 @@ const PageMasters = {
       const q = document.getElementById("book-search-input").value;
       const books = await Api.get(`/api/books/search?q=${encodeURIComponent(q)}`);
       document.getElementById("book-search-result").innerHTML = `
-        <table style="margin-top:10px;">
+        <table class="masters-table" style="margin-top:10px;">
+          <colgroup><col style="width:16%"><col style="width:26%"><col style="width:16%"><col style="width:16%"><col style="width:10%"><col style="width:180px"></colgroup>
           <thead><tr><th>ISBN</th><th>書名</th><th>著者</th><th>出版社</th><th>価格</th><th></th></tr></thead>
           <tbody>${books.length ? books.map((b) => `
             <tr>
               <td>${Util.escapeHtml(b.isbn)}</td><td>${Util.escapeHtml(b.title)}</td>
               <td>${Util.escapeHtml(b.author)}</td><td>${Util.escapeHtml(b.publisher)}</td>
               <td>${b.price ? Util.fmtYen(b.price) : ""}</td>
-              <td>
+              <td class="actions-cell">
                 <button class="small secondary" id="edit-book-${cssId(b.isbn)}">編集</button>
                 <button class="small danger" id="delete-book-${cssId(b.isbn)}">削除</button>
               </td>
@@ -2914,7 +2996,8 @@ const PageMasters = {
     content.innerHTML = `
       <div class="card">
         <p>タグは在庫一覧画面から書籍ごとに自由に付与・削除できます。ここでは名称の変更・タグ自体の削除ができます。</p>
-        <table>
+        <table class="masters-table">
+          <colgroup><col><col style="width:180px"></colgroup>
           <thead><tr><th>タグ名</th><th></th></tr></thead>
           <tbody>
             ${tags.length ? tags.map((t) => {
@@ -2922,7 +3005,7 @@ const PageMasters = {
                 return `
                   <tr>
                     <td><input type="text" id="edit-tag-name-${t.id}" value="${Util.escapeHtml(t.name)}"></td>
-                    <td>
+                    <td class="actions-cell">
                       <button class="small" id="save-tag-${t.id}">保存</button>
                       <button class="small secondary" id="cancel-tag-${t.id}">キャンセル</button>
                     </td>
@@ -2931,7 +3014,7 @@ const PageMasters = {
               return `
                 <tr>
                   <td>${Util.escapeHtml(t.name)}</td>
-                  <td>
+                  <td class="actions-cell">
                     <button class="small secondary" id="edit-tag-btn-${t.id}">編集</button>
                     <button class="small danger" id="delete-tag-btn-${t.id}">削除</button>
                   </td>
@@ -3069,61 +3152,76 @@ const PageData = {
 const PageTransfer = {
   fromStoreId: null,
   toStoreId: null,
+  fromLocation: "floor",
+  toLocation: "warehouse",
   selectedBook: null, // { isbn, title, availableQty }
 
   async render(root) {
     const currentStoreId = StoreState.currentStoreId;
     if (!this.fromStoreId) this.fromStoreId = currentStoreId;
     const stores = StoreState.stores;
-    if (!this.toStoreId || this.toStoreId === this.fromStoreId) {
+    if (this.toStoreId === null) {
       const other = stores.find((s) => s.id !== this.fromStoreId);
-      this.toStoreId = other ? other.id : null;
+      this.toStoreId = other ? other.id : this.fromStoreId;
+    }
+    if (this.fromStoreId === this.toStoreId && this.fromLocation === this.toLocation) {
+      this.toLocation = this.fromLocation === "floor" ? "warehouse" : "floor";
     }
     this.selectedBook = null;
 
     root.innerHTML = `
-      <h1>店舗間移動</h1>
-      <p class="subtitle">ある店舗の在庫を、卸会社・仕入形態・返品期限などの情報を保ったまま、別の店舗へ移動します。</p>
+      <h1>店舗間移動・エリア移動</h1>
+      <p class="subtitle">在庫を、卸会社・仕入形態・返品期限などの情報を保ったまま、別の店舗、または同じ店舗内の店内⇔倉庫へ移動します。</p>
 
-      ${stores.length < 2 ? `
-        <div class="card"><p class="empty-msg">店舗が1つしかないため、店舗間移動は使えません。先に「マスタ管理」で店舗を追加してください。</p></div>
-      ` : `
-        <div class="card">
-          <h2 style="margin-top:0;">移動する</h2>
-          <div class="grid-2">
-            <div class="form-row">
-              <label>移動元店舗</label>
-              <select id="tr-from-store">
-                ${stores.map((s) => `<option value="${s.id}" ${s.id === this.fromStoreId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`).join("")}
-              </select>
-            </div>
-            <div class="form-row">
-              <label>移動先店舗</label>
-              <select id="tr-to-store">
-                ${stores.map((s) => `<option value="${s.id}" ${s.id === this.toStoreId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`).join("")}
-              </select>
-            </div>
-          </div>
-
+      <div class="card">
+        <h2 style="margin-top:0;">移動する</h2>
+        <div class="grid-2">
           <div class="form-row">
-            <label>移動する書籍を検索(移動元店舗の在庫から選択)</label>
-            <input type="text" id="tr-search-input" placeholder="書名・著者・出版社・ISBN">
+            <label>移動元店舗</label>
+            <select id="tr-from-store">
+              ${stores.map((s) => `<option value="${s.id}" ${s.id === this.fromStoreId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`).join("")}
+            </select>
           </div>
-          <div id="tr-search-result"></div>
-
-          <div id="tr-selected-book-area" style="display:none; margin-top:14px;">
-            <div class="grid-2">
-              <div class="form-row"><label>選択中の書籍</label><input type="text" id="tr-selected-title" readonly></div>
-              <div class="form-row"><label>移動元の在庫数</label><input type="text" id="tr-available-qty" readonly></div>
-              <div class="form-row"><label>移動数量</label><input type="number" id="tr-quantity" value="1" min="1"></div>
-              <div class="form-row"><label>移動日</label><input type="date" id="tr-date" value="${Util.todayStr()}"></div>
-            </div>
-            <div class="form-row"><label>備考(任意)</label><input type="text" id="tr-note"></div>
-            <button id="tr-submit-btn">この内容で移動する</button>
-            <button class="secondary" id="tr-cancel-btn">選択解除</button>
+          <div class="form-row">
+            <label>移動元エリア</label>
+            <select id="tr-from-location">
+              <option value="floor" ${this.fromLocation !== "warehouse" ? "selected" : ""}>店内</option>
+              <option value="warehouse" ${this.fromLocation === "warehouse" ? "selected" : ""}>倉庫</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>移動先店舗</label>
+            <select id="tr-to-store">
+              ${stores.map((s) => `<option value="${s.id}" ${s.id === this.toStoreId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`).join("")}
+            </select>
+          </div>
+          <div class="form-row">
+            <label>移動先エリア</label>
+            <select id="tr-to-location">
+              <option value="floor" ${this.toLocation !== "warehouse" ? "selected" : ""}>店内</option>
+              <option value="warehouse" ${this.toLocation === "warehouse" ? "selected" : ""}>倉庫</option>
+            </select>
           </div>
         </div>
-      `}
+
+        <div class="form-row">
+          <label>移動する書籍を検索(移動元店舗・エリアの在庫から選択)</label>
+          <input type="text" id="tr-search-input" placeholder="書名・著者・出版社・ISBN">
+        </div>
+        <div id="tr-search-result"></div>
+
+        <div id="tr-selected-book-area" style="display:none; margin-top:14px;">
+          <div class="grid-2">
+            <div class="form-row"><label>選択中の書籍</label><input type="text" id="tr-selected-title" readonly></div>
+            <div class="form-row"><label>移動元の在庫数</label><input type="text" id="tr-available-qty" readonly></div>
+            <div class="form-row"><label>移動数量</label><input type="number" id="tr-quantity" value="1" min="1"></div>
+            <div class="form-row"><label>移動日</label><input type="date" id="tr-date" value="${Util.todayStr()}"></div>
+          </div>
+          <div class="form-row"><label>備考(任意)</label><input type="text" id="tr-note"></div>
+          <button id="tr-submit-btn">この内容で移動する</button>
+          <button class="secondary" id="tr-cancel-btn">選択解除</button>
+        </div>
+      </div>
 
       <div class="card">
         <h2 style="margin-top:0;">移動履歴(${Util.escapeHtml(StoreState.getCurrentStore().name)} が関わるもの)</h2>
@@ -3131,53 +3229,62 @@ const PageTransfer = {
       </div>
     `;
 
-    if (stores.length >= 2) {
-      document.getElementById("tr-from-store").addEventListener("change", (e) => {
-        this.fromStoreId = parseInt(e.target.value, 10);
-        this.render(root);
-      });
-      document.getElementById("tr-to-store").addEventListener("change", (e) => {
-        this.toStoreId = parseInt(e.target.value, 10);
-      });
+    document.getElementById("tr-from-store").addEventListener("change", (e) => {
+      this.fromStoreId = parseInt(e.target.value, 10);
+      this.render(root);
+    });
+    document.getElementById("tr-to-store").addEventListener("change", (e) => {
+      this.toStoreId = parseInt(e.target.value, 10);
+      this.render(root);
+    });
+    document.getElementById("tr-from-location").addEventListener("change", (e) => {
+      this.fromLocation = e.target.value;
+      this.render(root);
+    });
+    document.getElementById("tr-to-location").addEventListener("change", (e) => {
+      this.toLocation = e.target.value;
+      this.render(root);
+    });
 
-      const doSearch = async () => {
-        const q = document.getElementById("tr-search-input").value;
-        const items = await Api.get(`/api/stores/${this.fromStoreId}/stock?q=${encodeURIComponent(q)}`);
-        document.getElementById("tr-search-result").innerHTML = `
-          <table style="margin-top:8px;">
-            <thead><tr><th>書名</th><th>著者</th><th>在庫数</th><th></th></tr></thead>
-            <tbody>${items.length ? items.map((it) => `
-              <tr>
-                <td>${Util.escapeHtml(it.title || it.isbn)}</td>
-                <td>${Util.escapeHtml(it.author || "")}</td>
-                <td>${it.total_quantity}</td>
-                <td><button class="small" id="tr-pick-${cssId(it.isbn)}">選択</button></td>
-              </tr>
-            `).join("") : '<tr><td colspan="4" class="empty-msg">移動元店舗にはこの条件に合う在庫がありません</td></tr>'}</tbody>
-          </table>
-        `;
-        items.forEach((it) => {
-          const btn = document.getElementById(`tr-pick-${cssId(it.isbn)}`);
-          if (btn) {
-            btn.onclick = () => {
-              this.selectedBook = { isbn: it.isbn, title: it.title, availableQty: it.total_quantity };
-              this.showSelectedBook();
-            };
-          }
-        });
-      };
-      document.getElementById("tr-search-input").addEventListener("keydown", (e) => {
-        if (e.key === "Enter") doSearch();
+    const doSearch = async () => {
+      const q = document.getElementById("tr-search-input").value;
+      const items = await Api.get(`/api/stores/${this.fromStoreId}/stock?q=${encodeURIComponent(q)}`);
+      const qtyKey = this.fromLocation === "warehouse" ? "warehouse_quantity" : "floor_quantity";
+      const available = items.filter((it) => it[qtyKey] > 0);
+      document.getElementById("tr-search-result").innerHTML = `
+        <table style="margin-top:8px;">
+          <thead><tr><th>書名</th><th>著者</th><th>在庫数(${this.fromLocation === "warehouse" ? "倉庫" : "店内"})</th><th></th></tr></thead>
+          <tbody>${available.length ? available.map((it) => `
+            <tr>
+              <td>${Util.escapeHtml(it.title || it.isbn)}</td>
+              <td>${Util.escapeHtml(it.author || "")}</td>
+              <td>${it[qtyKey]}</td>
+              <td><button class="small" id="tr-pick-${cssId(it.isbn)}">選択</button></td>
+            </tr>
+          `).join("") : '<tr><td colspan="4" class="empty-msg">移動元店舗・エリアにはこの条件に合う在庫がありません</td></tr>'}</tbody>
+        </table>
+      `;
+      available.forEach((it) => {
+        const btn = document.getElementById(`tr-pick-${cssId(it.isbn)}`);
+        if (btn) {
+          btn.onclick = () => {
+            this.selectedBook = { isbn: it.isbn, title: it.title, availableQty: it[qtyKey] };
+            this.showSelectedBook();
+          };
+        }
       });
-      document.getElementById("tr-search-input").addEventListener("input", () => doSearch());
-      doSearch();
+    };
+    document.getElementById("tr-search-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doSearch();
+    });
+    document.getElementById("tr-search-input").addEventListener("input", () => doSearch());
+    doSearch();
 
-      document.getElementById("tr-cancel-btn").onclick = () => {
-        this.selectedBook = null;
-        document.getElementById("tr-selected-book-area").style.display = "none";
-      };
-      document.getElementById("tr-submit-btn").onclick = () => this.submit();
-    }
+    document.getElementById("tr-cancel-btn").onclick = () => {
+      this.selectedBook = null;
+      document.getElementById("tr-selected-book-area").style.display = "none";
+    };
+    document.getElementById("tr-submit-btn").onclick = () => this.submit();
 
     await this.renderHistory();
   },
@@ -3205,8 +3312,8 @@ const PageTransfer = {
               <tr>
                 <td>${Util.fmtDate(h.transfer_date)}</td>
                 <td>${Util.escapeHtml(h.title || h.isbn)}</td>
-                <td>${Util.escapeHtml(h.from_store_name || "-")}</td>
-                <td>${Util.escapeHtml(h.to_store_name || "-")}</td>
+                <td>${Util.escapeHtml(h.from_store_name || "-")}(${Util.locationLabel(h.from_location)})</td>
+                <td>${Util.escapeHtml(h.to_store_name || "-")}(${Util.locationLabel(h.to_location)})</td>
                 <td>${h.quantity}</td>
                 <td>${Util.escapeHtml(h.note || "")}</td>
               </tr>
@@ -3224,8 +3331,8 @@ const PageTransfer = {
       Util.toast("移動する書籍を選択してください", "warning");
       return;
     }
-    if (this.fromStoreId === this.toStoreId) {
-      Util.toast("移動元と移動先には別の店舗を指定してください", "error");
+    if (this.fromStoreId === this.toStoreId && this.fromLocation === this.toLocation) {
+      Util.toast("移動元と移動先が同じです。別の店舗、またはエリアを変えて指定してください", "error");
       return;
     }
     const quantity = parseInt(document.getElementById("tr-quantity").value || "0", 10);
@@ -3238,11 +3345,16 @@ const PageTransfer = {
         isbn: this.selectedBook.isbn,
         from_store_id: this.fromStoreId,
         to_store_id: this.toStoreId,
+        from_location: this.fromLocation,
+        to_location: this.toLocation,
         quantity,
         transfer_date: document.getElementById("tr-date").value || null,
         note: document.getElementById("tr-note").value,
       });
-      Util.toast(`「${rec.title || rec.isbn}」を${rec.from_store_name}から${rec.to_store_name}へ${rec.quantity}冊移動しました`, "success");
+      Util.toast(
+        `「${rec.title || rec.isbn}」を${rec.from_store_name}(${Util.locationLabel(rec.from_location)})から${rec.to_store_name}(${Util.locationLabel(rec.to_location)})へ${rec.quantity}冊移動しました`,
+        "success"
+      );
       this.selectedBook = null;
       this.render(document.getElementById("app"));
     } catch (e) {
