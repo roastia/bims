@@ -167,6 +167,55 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
 .csv-errors { max-height: 220px; overflow-y: auto; background: #fef8f8; border: 1px solid #f3c6c6; padding: 10px; border-radius: 6px; font-size: 0.85em; }
 .csv-warnings { max-height: 220px; overflow-y: auto; background: #fffbea; border: 1px solid #f0e0a0; padding: 10px; border-radius: 6px; font-size: 0.85em; margin-top: 8px; }
 
+.csv-dropzone {
+  border: 3px dashed var(--border);
+  border-radius: 10px;
+  padding: 56px 20px;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  cursor: pointer;
+  background: var(--bg);
+  transition: border-color 0.15s, background 0.15s;
+  margin-bottom: 10px;
+}
+.csv-dropzone:hover {
+  border-color: var(--primary);
+}
+.csv-dropzone.dragover {
+  border-color: var(--primary);
+  background: #eaf1f7;
+}
+.csv-dropzone.has-file {
+  border-color: var(--success);
+  border-style: solid;
+}
+.csv-dropzone-badge {
+  display: inline-block;
+  margin: 0 0 10px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: white;
+  font-size: 0.78em;
+  font-weight: bold;
+  letter-spacing: 0.02em;
+}
+.csv-dropzone-text {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 1em;
+  line-height: 1.7;
+}
+.csv-dropzone-filename {
+  margin: 10px 0 0;
+  font-weight: bold;
+  color: var(--text);
+}
+
 </style>
 </head>
 <body>
@@ -1988,7 +2037,12 @@ const PageImport = {
           <h2 style="margin-top:0;">入荷データCSV取込</h2>
           <p>列: <code>isbn, title, author, publisher, price, wholesaler_name, purchase_type(買切/委託), quantity, unit_cost, received_date, consignment_deadline</code></p>
           <p><button class="small secondary" id="dl-purchase-template">テンプレートCSVをダウンロード</button></p>
-          <input type="file" id="purchase-file" accept=".csv">
+          <div class="csv-dropzone" id="purchase-dropzone">
+            <p class="csv-dropzone-badge">ドラッグ&ドロップ対応</p>
+            <p class="csv-dropzone-text">ここにCSVファイルをドラッグ&ドロップ<br>またはクリックしてファイルを選択</p>
+            <p class="csv-dropzone-filename" id="purchase-filename"></p>
+          </div>
+          <input type="file" id="purchase-file" accept=".csv" style="display:none;">
           <button id="purchase-upload-btn">取込実行</button>
           <div id="purchase-result"></div>
         </div>
@@ -1996,6 +2050,7 @@ const PageImport = {
       document.getElementById("dl-purchase-template").onclick = () => {
         Csv.downloadText("purchase_template.csv", PURCHASE_CSV_TEMPLATE);
       };
+      this.setupDropzone("purchase-dropzone", "purchase-file", "purchase-filename");
       document.getElementById("purchase-upload-btn").onclick = async () => {
         const fileInput = document.getElementById("purchase-file");
         if (!fileInput.files.length) { Util.toast("CSVファイルを選択してください", "warning"); return; }
@@ -2013,7 +2068,12 @@ const PageImport = {
           <p>列: <code>isbn, quantity, sale_date, unit_price</code></p>
           <p class="barcode-hint">在庫は委託(返品期限が近いもの優先)→買切の順に自動で引き当てられます。書誌が未登録のISBNはスキップされます(先に入荷登録してください)。</p>
           <p><button class="small secondary" id="dl-sales-template">テンプレートCSVをダウンロード</button></p>
-          <input type="file" id="sales-file" accept=".csv">
+          <div class="csv-dropzone" id="sales-dropzone">
+            <p class="csv-dropzone-badge">ドラッグ&ドロップ対応</p>
+            <p class="csv-dropzone-text">ここにCSVファイルをドラッグ&ドロップ<br>またはクリックしてファイルを選択</p>
+            <p class="csv-dropzone-filename" id="sales-filename"></p>
+          </div>
+          <input type="file" id="sales-file" accept=".csv" style="display:none;">
           <button id="sales-upload-btn">取込実行</button>
           <div id="sales-result"></div>
         </div>
@@ -2021,6 +2081,7 @@ const PageImport = {
       document.getElementById("dl-sales-template").onclick = () => {
         Csv.downloadText("sales_template.csv", SALES_CSV_TEMPLATE);
       };
+      this.setupDropzone("sales-dropzone", "sales-file", "sales-filename");
       document.getElementById("sales-upload-btn").onclick = async () => {
         const fileInput = document.getElementById("sales-file");
         if (!fileInput.files.length) { Util.toast("CSVファイルを選択してください", "warning"); return; }
@@ -2032,6 +2093,56 @@ const PageImport = {
         }
       };
     }
+  },
+
+  setupDropzone(zoneId, inputId, filenameId) {
+    const zone = document.getElementById(zoneId);
+    const input = document.getElementById(inputId);
+    const filenameEl = document.getElementById(filenameId);
+
+    const showFilename = () => {
+      if (input.files.length) {
+        filenameEl.textContent = `選択中: ${input.files[0].name}`;
+        zone.classList.add("has-file");
+      } else {
+        filenameEl.textContent = "";
+        zone.classList.remove("has-file");
+      }
+    };
+
+    zone.onclick = () => input.click();
+    input.onchange = showFilename;
+
+    ["dragenter", "dragover"].forEach((evt) => {
+      zone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        zone.classList.add("dragover");
+      });
+    });
+    ["dragleave", "dragend"].forEach((evt) => {
+      zone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        zone.classList.remove("dragover");
+      });
+    });
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      zone.classList.remove("dragover");
+      const files = e.dataTransfer.files;
+      if (!files.length) return;
+      const csvFile = Array.from(files).find((f) => f.name.toLowerCase().endsWith(".csv")) || files[0];
+      if (!csvFile.name.toLowerCase().endsWith(".csv")) {
+        Util.toast("CSVファイルをドロップしてください", "warning");
+        return;
+      }
+      const dt = new DataTransfer();
+      dt.items.add(csvFile);
+      input.files = dt.files;
+      showFilename();
+    });
   },
 
   renderResult(el, result) {
