@@ -2178,7 +2178,8 @@ const LocalApi = {
     }
     if (method === "GET" && rawPath === "/api/dashboard") {
       const lowStockThreshold = Number(qs.get("low_stock_threshold") || "0");
-      return mapDashboardAll(Crud.getDashboardAll(state, 14, 30, 20, lowStockThreshold));
+      const bestSellerDays = Number(qs.get("best_seller_days") || "30");
+      return mapDashboardAll(Crud.getDashboardAll(state, 14, bestSellerDays, 20, lowStockThreshold));
     }
 
     throw new Error(`未対応のAPIです: ${method} ${rawPath}`);
@@ -2400,13 +2401,19 @@ const PageDashboard = {
     const stored = parseInt(localStorage.getItem("dash_lowstock_threshold") || "0", 10);
     return Number.isFinite(stored) && stored >= 0 ? stored : 0;
   })(),
+  bestSellerDaysOptions: [7, 14, 30, 60, 90, 180, 365],
+  bestSellerDays: (() => {
+    const options = [7, 14, 30, 60, 90, 180, 365];
+    const stored = parseInt(localStorage.getItem("dash_bestseller_days") || "30", 10);
+    return options.includes(stored) ? stored : 30;
+  })(),
 
   async render(root) {
     root.innerHTML = `<p class="loading">読み込み中...</p>`;
     let data, stockItems, salesData;
     try {
       [data, stockItems, salesData] = await Promise.all([
-        Api.get(`/api/dashboard?low_stock_threshold=${this.lowStockThreshold}`),
+        Api.get(`/api/dashboard?low_stock_threshold=${this.lowStockThreshold}&best_seller_days=${this.bestSellerDays}`),
         Api.get(`/api/stock?q=`),
         Api.get(`/api/sales?days=30`),
       ]);
@@ -2587,7 +2594,14 @@ const PageDashboard = {
           ${Pagination.controlsHtml("dash-zerostock", this.zeroStockPage.currentPage, zeroStockSlice.totalPages)}
         </div>
         <div class="card">
-          <h2 style="margin-top:0">売れ筋ランキング(直近30日)</h2>
+          <h2 style="margin-top:0">売れ筋ランキング(直近${this.bestSellerDays}日)</h2>
+          <div class="form-inline" style="margin-bottom:8px;">
+            <label class="stock-pagesize">集計期間
+              <select id="dash-bestseller-days">
+                ${this.bestSellerDaysOptions.map((n) => `<option value="${n}" ${this.bestSellerDays === n ? "selected" : ""}>直近${n}日</option>`).join("")}
+              </select>
+            </label>
+          </div>
           <table>
             <thead><tr><th>順位</th><th>書名</th><th>販売数</th></tr></thead>
             <tbody>${bestSellerRows}</tbody>
@@ -2605,7 +2619,7 @@ const PageDashboard = {
 
       <div class="grid-2">
         <div class="card">
-          <h2 style="margin-top:0;">売れ筋ランキング(直近30日・上位10・全店舗合算)</h2>
+          <h2 style="margin-top:0;">売れ筋ランキング(直近${this.bestSellerDays}日・上位10・全店舗合算)</h2>
           ${Charts.barChartHtml(bestSellerChartData, { color: "var(--accent)", unit: "冊" })}
         </div>
         <div class="card">
@@ -2713,6 +2727,16 @@ const PageDashboard = {
           applyThreshold();
         }
       });
+    }
+
+    const bestSellerDaysSelect = document.getElementById("dash-bestseller-days");
+    if (bestSellerDaysSelect) {
+      bestSellerDaysSelect.onchange = (e) => {
+        const n = parseInt(e.target.value, 10);
+        this.bestSellerDays = this.bestSellerDaysOptions.includes(n) ? n : 30;
+        localStorage.setItem("dash_bestseller_days", String(this.bestSellerDays));
+        this.render(root);
+      };
     }
 
     document.getElementById("pw-change-btn").onclick = async () => {
