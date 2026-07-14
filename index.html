@@ -1440,11 +1440,22 @@ const Crud = {
       if (!arr) { arr = []; lotsByStore.set(l.storeId, arr); }
       arr.push(l);
     });
+    // 「在庫0の書籍」は店舗ごとに判定する。
+    // (以前は全店舗の合計数量で判定していたため、ある店舗では売り切れていても
+    //  別の店舗に在庫があると合計が0にならず、一覧に出てこない不具合があった。
+    //  実務上は「自店で切れている本」を知りたいので、店舗×書籍単位でチェックする)
+    const zeroStock = [];
     const byStore = state.stores.map((s) => {
       const lots = lotsByStore.get(s.id) || [];
       const byIsbnQty = {};
       lots.forEach((l) => { byIsbnQty[l.isbn] = (byIsbnQty[l.isbn] || 0) + l.quantity; });
       const qtysInStock = Object.values(byIsbnQty).filter((q) => q > 0);
+      Object.keys(byIsbnQty).forEach((isbn) => {
+        if (byIsbnQty[isbn] <= 0) {
+          const book = state.books[isbn];
+          zeroStock.push({ isbn, title: book ? book.title : "", storeId: s.id, storeName: s.name });
+        }
+      });
       const consignmentAlertCount = lots.filter((l) => l.purchaseType === "consignment" && l.quantity > 0 && l.status === "active" && l.consignmentDeadline
         && daysBetween(today, l.consignmentDeadline) <= alertDays).length;
       return {
@@ -1454,13 +1465,12 @@ const Crud = {
         consignmentAlertCount,
       };
     });
+    zeroStock.sort((a, b) => (a.title || a.isbn).localeCompare(b.title || b.isbn, "ja")
+      || String(a.storeName || "").localeCompare(String(b.storeName || ""), "ja"));
 
-    // 在庫関連は全ロットから直接再集計する(店舗別内訳の単純合算だと同一書籍の重複計上がずれるため)
+    // 総在庫点数・総在庫冊数(見出し数値)は全店舗の合計を示すものなので、こちらは従来通り全ロットから再集計する
     const byIsbnQtyAll = {};
     state.stockLots.forEach((l) => { byIsbnQtyAll[l.isbn] = (byIsbnQtyAll[l.isbn] || 0) + l.quantity; });
-    const zeroStock = Object.keys(byIsbnQtyAll)
-      .filter((isbn) => byIsbnQtyAll[isbn] <= 0)
-      .map((isbn) => ({ isbn, title: (state.books[isbn] || {}).title || "" }));
 
     const consignmentAlerts = state.stockLots
       .filter((l) => l.purchaseType === "consignment" && l.quantity > 0 && l.status === "active" && l.consignmentDeadline
@@ -1808,7 +1818,7 @@ function mapDashboard(d) {
 }
 function mapDashboardAll(d) {
   return {
-    zero_stock: d.zeroStock,
+    zero_stock: d.zeroStock.map((z) => ({ isbn: z.isbn, title: z.title, store_id: z.storeId, store_name: z.storeName })),
     consignment_alerts: d.consignmentAlerts.map((a) => ({
       lot_id: a.lotId, isbn: a.isbn, title: a.title, wholesaler_name: a.wholesalerName, store_name: a.storeName,
       quantity: a.quantity, consignment_deadline: a.consignmentDeadline, days_until_deadline: a.daysUntilDeadline,
@@ -2502,8 +2512,8 @@ const PageDashboard = {
 
     const zeroStockSlice = Pagination.slice(data.zero_stock, this.zeroStockPage);
     const zeroStockRows = zeroStockSlice.pageItems.length
-      ? zeroStockSlice.pageItems.map((z) => `<tr><td>${Util.escapeHtml(z.title || z.isbn)}</td><td>${Util.escapeHtml(z.isbn)}</td></tr>`).join("")
-      : `<tr><td colspan="2" class="empty-msg">在庫切れの書籍はありません</td></tr>`;
+      ? zeroStockSlice.pageItems.map((z) => `<tr><td>${Util.escapeHtml(z.title || z.isbn)}</td><td>${Util.escapeHtml(z.store_name || "")}</td><td>${Util.escapeHtml(z.isbn)}</td></tr>`).join("")
+      : `<tr><td colspan="3" class="empty-msg">在庫切れの書籍はありません</td></tr>`;
 
     const bestSellerRows = data.best_sellers.length
       ? data.best_sellers.map((b, i) => `<tr><td>${i + 1}</td><td>${Util.escapeHtml(b.title || b.isbn)}</td><td>${b.total_sold}</td></tr>`).join("")
@@ -2557,7 +2567,7 @@ const PageDashboard = {
             ${Pagination.pageSizeSelectHtml("dash-zerostock", this.zeroStockPage.pageSize)}
           </div>
           <table>
-            <thead><tr><th>書名</th><th>ISBN</th></tr></thead>
+            <thead><tr><th>書名</th><th>店舗</th><th>ISBN</th></tr></thead>
             <tbody>${zeroStockRows}</tbody>
           </table>
           ${Pagination.controlsHtml("dash-zerostock", this.zeroStockPage.currentPage, zeroStockSlice.totalPages)}
