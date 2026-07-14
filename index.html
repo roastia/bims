@@ -404,7 +404,6 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
     <a href="#/sales" data-route="/sales">売上履歴</a>
     <a href="#/returns" data-route="/returns">返品管理</a>
     <a href="#/stocktake" data-route="/stocktake">棚卸</a>
-    <a href="#/analytics" data-route="/analytics">グラフ</a>
     <a href="#/masters" data-route="/masters">マスタ管理</a>
   </nav>
 </header>
@@ -1845,9 +1844,13 @@ const StoreState = {
 const PageDashboard = {
   async render(root) {
     root.innerHTML = `<p class="loading">読み込み中...</p>`;
-    let data;
+    let data, stockItems, salesData;
     try {
-      data = await Api.get(`/api/dashboard`);
+      [data, stockItems, salesData] = await Promise.all([
+        Api.get(`/api/dashboard`),
+        Api.get(`/api/stock?q=`),
+        Api.get(`/api/sales?days=30`),
+      ]);
     } catch (e) {
       root.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
       return;
@@ -1861,6 +1864,75 @@ const PageDashboard = {
       sales: state.sales.length,
       returns: state.returns.length,
     };
+
+    // ---- グラフ用データの集計(旧グラフページから統合) ----
+    const dayMap = {};
+    const todayForChart = new Date();
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(todayForChart);
+      d.setDate(d.getDate() - i);
+      const key = Util.fmtDate(d.toISOString());
+      dayMap[key] = 0;
+    }
+    salesData.forEach((s) => {
+      const key = Util.fmtDate(s.sale_date);
+      if (key in dayMap) dayMap[key] += s.quantity;
+    });
+    const salesTrend = Object.keys(dayMap).sort().map((k) => ({ label: k.slice(5), value: dayMap[k] }));
+
+    const bestSellerChartData = data.best_sellers.slice(0, 10).map((b) => ({
+      label: b.title || b.isbn, value: b.total_sold,
+    }));
+
+    const allLots = [];
+    stockItems.forEach((it) => it.lots.forEach((lot) => allLots.push({ ...lot, publisher: it.publisher, price: it.price, isbn: it.isbn })));
+
+    const byPurchaseType = {};
+    allLots.forEach((l) => { byPurchaseType[l.purchase_type] = (byPurchaseType[l.purchase_type] || 0) + l.quantity; });
+    const purchaseTypeData = Object.keys(byPurchaseType).map((k, i) => ({
+      label: Util.purchaseTypeLabel(k), value: byPurchaseType[k], color: Charts.palette[i % Charts.palette.length],
+    }));
+
+    const byLocation = {};
+    allLots.forEach((l) => { byLocation[l.location] = (byLocation[l.location] || 0) + l.quantity; });
+    const locationData = Object.keys(byLocation).map((k, i) => ({
+      label: Util.locationLabel(k), value: byLocation[k], color: Charts.palette[(i + 3) % Charts.palette.length],
+    }));
+
+    const byWholesaler = {};
+    allLots.forEach((l) => {
+      const name = l.wholesaler_name || "卸会社不明";
+      byWholesaler[name] = (byWholesaler[name] || 0) + l.quantity;
+    });
+    const wholesalerData = Object.entries(byWholesaler)
+      .sort((a, b) => b[1] - a[1]).slice(0, 10)
+      .map(([label, value]) => ({ label, value }));
+
+    const byPublisher = {};
+    stockItems.forEach((it) => {
+      const name = it.publisher || "出版社不明";
+      byPublisher[name] = (byPublisher[name] || 0) + it.total_quantity;
+    });
+    const publisherData = Object.entries(byPublisher)
+      .sort((a, b) => b[1] - a[1]).slice(0, 10)
+      .map(([label, value]) => ({ label, value }));
+
+    const byStoreChartData = (data.by_store || [])
+      .slice().sort((a, b) => b.total_quantity_in_stock - a.total_quantity_in_stock)
+      .map((s) => ({ label: s.store_name, value: s.total_quantity_in_stock }));
+
+    const priceBuckets = [
+      { label: "〜500円", min: 0, max: 500 },
+      { label: "501〜1000円", min: 501, max: 1000 },
+      { label: "1001〜1500円", min: 1001, max: 1500 },
+      { label: "1501〜2000円", min: 1501, max: 2000 },
+      { label: "2001〜3000円", min: 2001, max: 3000 },
+      { label: "3001円〜", min: 3001, max: Infinity },
+    ];
+    const priceData = priceBuckets.map((b) => ({
+      label: b.label,
+      value: stockItems.filter((it) => it.price && it.price >= b.min && it.price <= b.max).length,
+    }));
 
     const consignmentRows = data.consignment_alerts.length
       ? data.consignment_alerts.map((a) => `
@@ -1946,6 +2018,52 @@ const PageDashboard = {
         </div>
       </div>
 
+      <h2 style="margin-top:36px;">グラフで見る全店舗データ</h2>
+      <p class="subtitle">在庫・売上に関するデータをグラフで確認できます。</p>
+
+      <div class="card">
+        <h2 style="margin-top:0;">売上推移(直近30日・冊数・全店舗合算)</h2>
+        ${Charts.lineSvg(salesTrend)}
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h2 style="margin-top:0;">売れ筋ランキング(直近30日・上位10・全店舗合算)</h2>
+          ${Charts.barChartHtml(bestSellerChartData, { color: "var(--accent)", unit: "冊" })}
+        </div>
+        <div class="card">
+          <h2 style="margin-top:0;">出版社別 在庫点数(上位10)</h2>
+          ${Charts.barChartHtml(publisherData, { unit: "冊" })}
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h2 style="margin-top:0;">仕入形態別 在庫点数</h2>
+          ${Charts.donutSvg(purchaseTypeData)}
+        </div>
+        <div class="card">
+          <h2 style="margin-top:0;">保管場所別 在庫点数</h2>
+          ${Charts.donutSvg(locationData)}
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h2 style="margin-top:0;">卸会社別 在庫点数(上位10)</h2>
+          ${Charts.barChartHtml(wholesalerData, { unit: "冊" })}
+        </div>
+        <div class="card">
+          <h2 style="margin-top:0;">価格帯分布(タイトル数)</h2>
+          ${Charts.barChartHtml(priceData, { color: "var(--success)", unit: "点" })}
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;">店舗別 在庫合計冊数</h2>
+        ${Charts.barChartHtml(byStoreChartData, { color: "var(--primary-dark)", unit: "冊" })}
+      </div>
+
       <h2 style="margin-top:36px;">データのバックアップ・他のパソコンへの移行</h2>
       <p class="subtitle">このアプリはインターネットやサーバーを使わず、このブラウザの中だけにデータを保存しています。定期的にエクスポートしてバックアップを取ることをおすすめします。</p>
 
@@ -2015,8 +2133,9 @@ const PageDashboard = {
 };
 
 // ============================================================
-// グラフ表示ページ: 在庫・売上などのデータを可視化する
+// チャート描画ヘルパー: 在庫・売上などのデータを可視化する
 // 外部ライブラリを使わず、HTML/CSSのバーとSVGの円グラフ・折れ線グラフで表現する
+// ダッシュボード画面(10_page_dashboard.js)から利用される
 // ============================================================
 const Charts = {
   palette: ["#2c5f8a", "#d97b3f", "#2e7d4f", "#b8860b", "#6a3fa0", "#c0392b", "#3a8fb7", "#8a6d3b", "#5a8f5a", "#a45a8f"],
@@ -2105,148 +2224,6 @@ const Charts = {
         ${circles}
         ${xLabels}
       </svg>
-    `;
-  },
-};
-
-const PageAnalytics = {
-  async render(root) {
-    root.innerHTML = `<p class="loading">読み込み中...</p>`;
-    let items, sales, dashboard;
-    try {
-      [items, sales, dashboard] = await Promise.all([
-        Api.get(`/api/stock?q=`),
-        Api.get(`/api/sales?days=30`),
-        Api.get(`/api/dashboard`),
-      ]);
-    } catch (e) {
-      root.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
-      return;
-    }
-
-    // ---- 売上推移(直近30日・日別冊数) ----
-    const dayMap = {};
-    const today = new Date();
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date(today);
-      d.setDate(d.getDate() - i);
-      const key = Util.fmtDate(d.toISOString());
-      dayMap[key] = 0;
-    }
-    sales.forEach((s) => {
-      const key = Util.fmtDate(s.sale_date);
-      if (key in dayMap) dayMap[key] += s.quantity;
-    });
-    const salesTrend = Object.keys(dayMap).sort().map((k) => ({ label: k.slice(5), value: dayMap[k] }));
-
-    // ---- 売れ筋ランキング(直近30日・上位10) ----
-    const bestSellerData = dashboard.best_sellers.slice(0, 10).map((b) => ({
-      label: b.title || b.isbn, value: b.total_sold,
-    }));
-
-    // ---- 全ロットを集計対象にする ----
-    const allLots = [];
-    items.forEach((it) => it.lots.forEach((lot) => allLots.push({ ...lot, publisher: it.publisher, price: it.price, isbn: it.isbn })));
-
-    // 仕入形態別
-    const byPurchaseType = {};
-    allLots.forEach((l) => { byPurchaseType[l.purchase_type] = (byPurchaseType[l.purchase_type] || 0) + l.quantity; });
-    const purchaseTypeData = Object.keys(byPurchaseType).map((k, i) => ({
-      label: Util.purchaseTypeLabel(k), value: byPurchaseType[k], color: Charts.palette[i % Charts.palette.length],
-    }));
-
-    // 保管場所別
-    const byLocation = {};
-    allLots.forEach((l) => { byLocation[l.location] = (byLocation[l.location] || 0) + l.quantity; });
-    const locationData = Object.keys(byLocation).map((k, i) => ({
-      label: Util.locationLabel(k), value: byLocation[k], color: Charts.palette[(i + 3) % Charts.palette.length],
-    }));
-
-    // 卸会社別(在庫点数)
-    const byWholesaler = {};
-    allLots.forEach((l) => {
-      const name = l.wholesaler_name || "卸会社不明";
-      byWholesaler[name] = (byWholesaler[name] || 0) + l.quantity;
-    });
-    const wholesalerData = Object.entries(byWholesaler)
-      .sort((a, b) => b[1] - a[1]).slice(0, 10)
-      .map(([label, value]) => ({ label, value }));
-
-    // 出版社別(在庫点数・上位10)
-    const byPublisher = {};
-    items.forEach((it) => {
-      const name = it.publisher || "出版社不明";
-      byPublisher[name] = (byPublisher[name] || 0) + it.total_quantity;
-    });
-    const publisherData = Object.entries(byPublisher)
-      .sort((a, b) => b[1] - a[1]).slice(0, 10)
-      .map(([label, value]) => ({ label, value }));
-
-    // 店舗別 在庫合計冊数
-    const byStoreData = (dashboard.by_store || [])
-      .slice().sort((a, b) => b.total_quantity_in_stock - a.total_quantity_in_stock)
-      .map((s) => ({ label: s.store_name, value: s.total_quantity_in_stock }));
-
-    // 価格帯分布(タイトル数)
-    const priceBuckets = [
-      { label: "〜500円", min: 0, max: 500 },
-      { label: "501〜1000円", min: 501, max: 1000 },
-      { label: "1001〜1500円", min: 1001, max: 1500 },
-      { label: "1501〜2000円", min: 1501, max: 2000 },
-      { label: "2001〜3000円", min: 2001, max: 3000 },
-      { label: "3001円〜", min: 3001, max: Infinity },
-    ];
-    const priceData = priceBuckets.map((b) => ({
-      label: b.label,
-      value: items.filter((it) => it.price && it.price >= b.min && it.price <= b.max).length,
-    }));
-
-    root.innerHTML = `
-      <h1>グラフ</h1>
-      <p class="subtitle">全店舗合算の在庫・売上データをグラフで確認できます。</p>
-
-      <div class="card">
-        <h2 style="margin-top:0;">売上推移(直近30日・冊数・全店舗合算)</h2>
-        ${Charts.lineSvg(salesTrend)}
-      </div>
-
-      <div class="grid-2">
-        <div class="card">
-          <h2 style="margin-top:0;">売れ筋ランキング(直近30日・上位10・全店舗合算)</h2>
-          ${Charts.barChartHtml(bestSellerData, { color: "var(--accent)", unit: "冊" })}
-        </div>
-        <div class="card">
-          <h2 style="margin-top:0;">出版社別 在庫点数(上位10)</h2>
-          ${Charts.barChartHtml(publisherData, { unit: "冊" })}
-        </div>
-      </div>
-
-      <div class="grid-2">
-        <div class="card">
-          <h2 style="margin-top:0;">仕入形態別 在庫点数</h2>
-          ${Charts.donutSvg(purchaseTypeData)}
-        </div>
-        <div class="card">
-          <h2 style="margin-top:0;">保管場所別 在庫点数</h2>
-          ${Charts.donutSvg(locationData)}
-        </div>
-      </div>
-
-      <div class="grid-2">
-        <div class="card">
-          <h2 style="margin-top:0;">卸会社別 在庫点数(上位10)</h2>
-          ${Charts.barChartHtml(wholesalerData, { unit: "冊" })}
-        </div>
-        <div class="card">
-          <h2 style="margin-top:0;">価格帯分布(タイトル数)</h2>
-          ${Charts.barChartHtml(priceData, { color: "var(--success)", unit: "点" })}
-        </div>
-      </div>
-
-      <div class="card">
-        <h2 style="margin-top:0;">店舗別 在庫合計冊数</h2>
-        ${Charts.barChartHtml(byStoreData, { color: "var(--primary-dark)", unit: "冊" })}
-      </div>
     `;
   },
 };
@@ -3775,9 +3752,9 @@ const Router = {
     "/returns": PageReturns,
     "/stocktake": PageStocktake,
     "/masters": PageMasters,
-    "/analytics": PageAnalytics,
     "/data": PageDashboard, // データ管理はダッシュボードに統合(旧リンク互換のため残す)
     "/transfer": PageStock, // 在庫移動は在庫一覧に統合(旧リンク互換のため残す)
+    "/analytics": PageDashboard, // グラフはダッシュボードに統合(旧リンク互換のため残す)
   },
 
   parseHash() {
