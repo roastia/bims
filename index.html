@@ -2356,6 +2356,9 @@ const PageStock = {
   expandedIds: {},
   currentPage: 1,
   lastQuery: null,
+  currentQuery: "",
+  searchDebounceTimer: null,
+  searchToken: 0,
   pageSize: (() => {
     const stored = localStorage.getItem("stock_page_size");
     if (stored === "all") return "all";
@@ -2364,24 +2367,16 @@ const PageStock = {
   })(),
 
   async render(root, params) {
-    root.innerHTML = `<p class="loading">読み込み中...</p>`;
     const q = (params && params.q) || "";
+    this.currentQuery = q;
     if (this.lastQuery !== q) {
       this.currentPage = 1;
       this.lastQuery = q;
     }
 
-    let items;
-    try {
-      items = await Api.get(`/api/stock?q=${encodeURIComponent(q)}`);
-    } catch (e) {
-      root.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
-      return;
-    }
-
     root.innerHTML = `
       <h1>在庫一覧</h1>
-      <p class="subtitle">全店舗の在庫を横断して表示します。書名・著者・出版社・ISBN・タグ・店舗・卸会社で絞り込めます。</p>
+      <p class="subtitle">全店舗の在庫を横断して表示します。書名・著者・出版社・ISBN・タグ・店舗・卸会社で絞り込めます。入力すると自動的にリアルタイムで絞り込まれます。</p>
 
       <div class="card">
         <div class="form-inline">
@@ -2393,18 +2388,54 @@ const PageStock = {
         </div>
       </div>
 
-      <div id="stock-list"></div>
+      <div id="stock-list"><p class="loading">読み込み中...</p></div>
     `;
 
-    document.getElementById("stock-search-btn").onclick = () => {
-      const val = document.getElementById("stock-search").value;
-      Router.navigate("/stock", { q: val });
+    const searchInput = document.getElementById("stock-search");
+    const runSearch = () => {
+      const val = searchInput.value;
+      this.currentQuery = val;
+      this.currentPage = 1;
+      const hash = "#/stock" + (val ? "?q=" + encodeURIComponent(val) : "");
+      if (window.location.hash !== hash) {
+        window.history.replaceState(null, "", hash);
+      }
+      this.loadAndRenderList(root, params);
     };
-    document.getElementById("stock-search").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") document.getElementById("stock-search-btn").click();
+    searchInput.addEventListener("input", () => {
+      clearTimeout(this.searchDebounceTimer);
+      this.searchDebounceTimer = setTimeout(runSearch, 250);
+    });
+    document.getElementById("stock-search-btn").onclick = () => {
+      clearTimeout(this.searchDebounceTimer);
+      runSearch();
+    };
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        clearTimeout(this.searchDebounceTimer);
+        runSearch();
+      }
     });
 
+    await this.loadAndRenderList(root, params);
+  },
+
+  async loadAndRenderList(root, params) {
     const listEl = document.getElementById("stock-list");
+    const q = this.currentQuery || "";
+    const myToken = ++this.searchToken;
+
+    let items;
+    try {
+      items = await Api.get(`/api/stock?q=${encodeURIComponent(q)}`);
+    } catch (e) {
+      if (myToken !== this.searchToken) return;
+      listEl.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
+      return;
+    }
+    // タイピング中に古い検索結果が新しい結果を上書きしてしまわないようにする
+    if (myToken !== this.searchToken) return;
+
     if (items.length === 0) {
       listEl.innerHTML = `<p class="empty-msg">該当する在庫がありません</p>`;
       return;
@@ -2472,12 +2503,12 @@ const PageStock = {
       this.pageSize = e.target.value === "all" ? "all" : parseInt(e.target.value, 10);
       localStorage.setItem("stock_page_size", String(this.pageSize));
       this.currentPage = 1;
-      this.render(root, params);
+      this.loadAndRenderList(root, params);
     };
     const prevBtn = document.getElementById("stock-page-prev");
-    if (prevBtn) prevBtn.onclick = () => { this.currentPage--; this.render(root, params); };
+    if (prevBtn) prevBtn.onclick = () => { this.currentPage--; this.loadAndRenderList(root, params); };
     const nextBtn = document.getElementById("stock-page-next");
-    if (nextBtn) nextBtn.onclick = () => { this.currentPage++; this.render(root, params); };
+    if (nextBtn) nextBtn.onclick = () => { this.currentPage++; this.loadAndRenderList(root, params); };
 
     pageItems.forEach((item) => {
       const id = cssId(item.isbn);
@@ -2517,7 +2548,7 @@ const PageStock = {
             await Api.post(`/api/stores/${sec.store_id}/books/${encodeURIComponent(item.isbn)}/tags`, { tag_name: name });
             Util.toast("タグを追加しました", "success");
             this.expandedIds[item.isbn] = true;
-            this.render(root, params);
+            this.loadAndRenderList(root, params);
           } catch (e2) {
             Util.toast("タグ追加に失敗しました: " + e2.message, "error");
           }
@@ -2541,7 +2572,7 @@ const PageStock = {
             await Api.del(`/api/stores/${sec.store_id}/books/${encodeURIComponent(item.isbn)}/tags/${tag.id}`);
             Util.toast("タグを削除しました", "success");
             this.expandedIds[item.isbn] = true;
-            this.render(root, params);
+            this.loadAndRenderList(root, params);
           };
         }
       });
@@ -2572,7 +2603,7 @@ const PageStock = {
               "success"
             );
             this.expandedIds[item.isbn] = true;
-            this.render(root, params);
+            this.loadAndRenderList(root, params);
           } catch (e2) {
             Util.toast("移動に失敗しました: " + e2.message, "error");
           }
