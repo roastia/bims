@@ -624,6 +624,11 @@ function daysBetween(fromStr, toStr) {
   return Math.round((b - a) / 86400000);
 }
 
+function stripCsvTextMarker(v) {
+  // Excel対策で先頭に付与した ' (アポストロフィ) を取り除く
+  return String(v || "").replace(/^'+/, "").trim();
+}
+
 function parseFlexibleDate(value) {
   if (!value) return null;
   const v = String(value).trim();
@@ -974,7 +979,7 @@ const Crud = {
     for (const row of rows) {
       total++;
       try {
-        const isbn = (row.isbn || row.ISBN || "").trim();
+        const isbn = stripCsvTextMarker(row.isbn || row.ISBN || "");
         if (!isbn) throw new Error("isbn が空です");
         const quantity = parseInt(row.quantity || row.数量 || "", 10);
         if (!quantity || quantity <= 0) throw new Error("quantity は正の整数である必要があります");
@@ -1036,7 +1041,7 @@ const Crud = {
     for (const row of rows) {
       total++;
       try {
-        const isbn = (row.isbn || row.ISBN || "").trim();
+        const isbn = stripCsvTextMarker(row.isbn || row.ISBN || "");
         if (!isbn) throw new Error("isbn が空です");
         const quantity = parseInt(row.quantity || row.数量 || "", 10);
         if (!quantity || quantity <= 0) throw new Error("quantity は正の整数である必要があります");
@@ -2202,13 +2207,13 @@ const PageReceive = {
 // ---- 13_page_importCsv.js ----
 const PURCHASE_CSV_TEMPLATE =
   "isbn,title,author,publisher,price,wholesaler_name,purchase_type,quantity,unit_cost,received_date,consignment_deadline,location\n" +
-  "9784000000000,サンプル書名,サンプル著者,サンプル出版社,1500,日販,買切,10,1050,2026-07-01,,店内\n" +
-  "9784000000001,サンプル書名2,サンプル著者2,サンプル出版社2,1200,トーハン,委託,5,900,2026-07-01,2026-09-30,倉庫\n";
+  "'9784000000000,サンプル書名,サンプル著者,サンプル出版社,1500,日販,買切,10,1050,2026-07-01,,店内\n" +
+  "'9784000000001,サンプル書名2,サンプル著者2,サンプル出版社2,1200,トーハン,委託,5,900,2026-07-01,2026-09-30,倉庫\n";
 
 const SALES_CSV_TEMPLATE =
   "isbn,quantity,sale_date,unit_price\n" +
-  "9784000000000,2,2026-07-10,1500\n" +
-  "9784000000001,1,2026-07-11,1200\n";
+  "'9784000000000,2,2026-07-10,1500\n" +
+  "'9784000000001,1,2026-07-11,1200\n";
 
 const PageImport = {
   activeTab: "purchase",
@@ -2259,6 +2264,7 @@ const PageImport = {
           <h2 style="margin-top:0;">入荷データCSV取込</h2>
           <p class="barcode-hint">「${Util.escapeHtml(StoreState.stores.find((s) => s.id === storeId).name)}」の在庫として取り込まれます。</p>
           <p>列: <code>isbn, title, author, publisher, price, wholesaler_name, purchase_type(買切/委託), quantity, unit_cost, received_date, consignment_deadline, location(店内/倉庫・省略時は店内)</code></p>
+          <p class="barcode-hint">ISBNをExcelで開くと指数表記(例: 9.78428E+12)になることがあります。テンプレートのように先頭に <code>'</code> を付けると文字列として正しく表示されます(取込時は自動的に取り除かれます)。</p>
           <p><button class="small secondary" id="dl-purchase-template">テンプレートCSVをダウンロード</button></p>
           <div class="csv-dropzone" id="purchase-dropzone">
             <p class="csv-dropzone-badge">ドラッグ&ドロップ対応</p>
