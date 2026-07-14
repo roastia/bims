@@ -527,6 +527,42 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
   margin-bottom: 0;
 }
 
+.stock-export-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---- PDFエクスポート用の印刷専用領域 ----
+   通常は非表示。印刷時(=ブラウザの印刷ダイアログで「PDFとして保存」を選んだとき)だけ、
+   このエリアだけを表示して他の画面要素はすべて隠す(外部ライブラリを使わずPDF出力するための仕組み)。 */
+.print-only {
+  display: none;
+}
+@media print {
+  body > *:not(.print-only) {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 20px;
+  }
+  .print-stock-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+  .print-stock-table th,
+  .print-stock-table td {
+    border: 1px solid #999;
+    padding: 4px 6px;
+    text-align: left;
+  }
+}
+
 </style>
 </head>
 <body>
@@ -3117,7 +3153,11 @@ const PageStock = {
     // 件数が多いとき(数千件規模)に初期表示が重くならないようにするための対策。
     listEl.innerHTML = `
       <div class="stock-list-toolbar">
-        <p class="stock-count">${total}件中 ${total ? startIdx + 1 : 0}-${endIdx}件を表示</p>
+        <p class="stock-count">${total}件中 ${total ? startIdx + 1 : 0}-${endIdx}件を表示${q ? "(検索結果)" : ""}</p>
+        <div class="stock-export-buttons">
+          <button class="small secondary" id="stock-export-csv">CSVエクスポート</button>
+          <button class="small secondary" id="stock-export-pdf">PDFエクスポート</button>
+        </div>
         ${pageSizeSelectHtml}
       </div>
       <div class="stock-table-wrap">
@@ -3154,6 +3194,12 @@ const PageStock = {
     if (prevBtn) prevBtn.onclick = () => { this.currentPage--; this.loadAndRenderList(root, params); };
     const nextBtn = document.getElementById("stock-page-next");
     if (nextBtn) nextBtn.onclick = () => { this.currentPage++; this.loadAndRenderList(root, params); };
+
+    // CSV/PDFエクスポート(検索中の場合は絞り込み後の全件、ページ送りに関係なく全件が対象)
+    const exportCsvBtn = document.getElementById("stock-export-csv");
+    if (exportCsvBtn) exportCsvBtn.onclick = () => this.exportCsv(items, q);
+    const exportPdfBtn = document.getElementById("stock-export-pdf");
+    if (exportPdfBtn) exportPdfBtn.onclick = () => this.exportPdf(items, q);
 
     pageItems.forEach((item) => {
       const id = cssId(item.isbn);
@@ -3338,8 +3384,8 @@ const PageStock = {
     });
   },
 
-  renderRow(item) {
-    const id = cssId(item.isbn);
+  // 一覧の行・CSV/PDFエクスポートで共通して使う表示用フィールドをまとめて計算する
+  computeRowFields(item) {
     const tagsText = item.tags.length ? item.tags.join(", ") : "-";
     const wholesalerNames = [...new Set(item.lots.map((l) => l.wholesaler_name).filter(Boolean))];
     const wholesalerText = wholesalerNames.length ? wholesalerNames.join("、") : "-";
@@ -3353,6 +3399,12 @@ const PageStock = {
       priceText = singlePrice ? Util.fmtYen(singlePrice) : "-";
     }
     const storeText = (item.store_names && item.store_names.length) ? item.store_names.join("、") : "-";
+    return { tagsText, wholesalerText, priceText, storeText };
+  },
+
+  renderRow(item) {
+    const id = cssId(item.isbn);
+    const { tagsText, wholesalerText, priceText, storeText } = this.computeRowFields(item);
 
     return `
       <tr class="stock-row" id="row-${id}">
@@ -3371,6 +3423,57 @@ const PageStock = {
         <td colspan="10"></td>
       </tr>
     `;
+  },
+
+  // CSV/PDFエクスポートで共通して使う、一覧に表示している内容そのままの行データを組み立てる
+  buildExportRows(items) {
+    const header = ["ISBN", "書名", "著者", "出版社", "卸会社", "本体価格(税別)", "店舗", "店内在庫", "倉庫在庫", "タグ"];
+    const rows = items.map((item) => {
+      const { tagsText, wholesalerText, priceText, storeText } = this.computeRowFields(item);
+      return [
+        item.isbn, item.title || "(書名未登録)", item.author || "", item.publisher || "",
+        wholesalerText, priceText, storeText, item.floor_quantity, item.warehouse_quantity, tagsText,
+      ];
+    });
+    return { header, rows };
+  },
+
+  exportCsv(items, query) {
+    const { header, rows } = this.buildExportRows(items);
+    const escapeCsvField = (v) => {
+      const s = String(v);
+      return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const lines = [header, ...rows].map((r) => r.map(escapeCsvField).join(",")).join("\r\n");
+    const dateStr = Util.todayStr().replace(/-/g, "");
+    const suffix = query ? "_検索結果" : "";
+    Csv.downloadText(`在庫一覧${suffix}_${dateStr}.csv`, lines);
+    Util.toast(`${rows.length}件をCSVエクスポートしました`, "success");
+  },
+
+  exportPdf(items, query) {
+    const { header, rows } = this.buildExportRows(items);
+    let printArea = document.getElementById("stock-print-area");
+    if (!printArea) {
+      printArea = document.createElement("div");
+      printArea.id = "stock-print-area";
+      printArea.className = "print-only";
+      document.body.appendChild(printArea);
+    }
+    const now = new Date();
+    const generatedAt = `${Util.todayStr()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    printArea.innerHTML = `
+      <h1>在庫一覧${query ? `(検索結果: ${Util.escapeHtml(query)})` : ""}</h1>
+      <p>出力日時: ${generatedAt} / ${rows.length}件</p>
+      <table class="print-stock-table">
+        <thead><tr>${header.map((h) => `<th>${Util.escapeHtml(h)}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${rows.map((r) => `<tr>${r.map((v) => `<td>${Util.escapeHtml(String(v))}</td>`).join("")}</tr>`).join("")}
+        </tbody>
+      </table>
+    `;
+    window.print();
+    Util.toast("印刷ダイアログで「PDFとして保存」を選ぶとPDF出力できます", "success");
   },
 
   buildDetailHtml(item) {
