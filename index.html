@@ -1182,6 +1182,20 @@ const Crud = {
     const byIsbn = {};
     lots.forEach((l) => { (byIsbn[l.isbn] = byIsbn[l.isbn] || []).push(l); });
 
+    // 店舗・卸会社・タグ付けは書籍点数分だけ参照されるため、
+    // 都度state.stores/state.wholesalers/state.bookTagsを線形探索すると
+    // 書籍数が多いときに全体がO(書籍数×マスタ件数)になり重くなる。
+    // ここで一度だけMap/Setを組んでO(1)参照にする(結果の並び順は従来と変わらない)。
+    const storesById = new Map(state.stores.map((s) => [s.id, s]));
+    const wholesalersById = new Map(state.wholesalers.map((w) => [w.id, w]));
+    const bookTagIdsByStoreIsbn = new Map();
+    state.bookTags.forEach((bt) => {
+      const key = bt.storeId + "|" + bt.isbn;
+      let arr = bookTagIdsByStoreIsbn.get(key);
+      if (!arr) { arr = []; bookTagIdsByStoreIsbn.set(key, arr); }
+      arr.push(bt.tagId);
+    });
+
     // 複数ワード検索(スペース区切り・すべての語を含む場合のみヒット)に対応
     const terms = (query || "").trim().split(/[\s\u3000]+/).filter(Boolean).map((t) => t.toLowerCase());
 
@@ -1196,17 +1210,18 @@ const Crud = {
 
       const storeIdsForBook = [...new Set(lotList.map((l) => l.storeId))];
       const tagsByStore = storeIdsForBook.map((sid) => {
-        const tagIds = state.bookTags.filter((bt) => bt.storeId === sid && bt.isbn === isbn).map((bt) => bt.tagId);
-        const names = state.tags.filter((t) => tagIds.includes(t.id)).map((t) => t.name);
-        const st = state.stores.find((x) => x.id === sid);
+        const tagIds = bookTagIdsByStoreIsbn.get(sid + "|" + isbn) || [];
+        const tagIdSet = new Set(tagIds);
+        const names = state.tags.filter((t) => tagIdSet.has(t.id)).map((t) => t.name);
+        const st = storesById.get(sid);
         return { storeId: sid, storeName: st ? st.name : null, tags: names };
       });
       const tags = [...new Set(tagsByStore.flatMap((x) => x.tags))];
       const storeNames = tagsByStore.map((x) => x.storeName).filter(Boolean);
 
       const lotOuts = lotList.map((l) => {
-        const w = l.wholesalerId ? state.wholesalers.find((x) => x.id === l.wholesalerId) : null;
-        const st = state.stores.find((x) => x.id === l.storeId);
+        const w = l.wholesalerId ? wholesalersById.get(l.wholesalerId) : null;
+        const st = storesById.get(l.storeId);
         return {
           id: l.id, isbn: l.isbn, storeId: l.storeId, storeName: st ? st.name : null,
           wholesalerId: l.wholesalerId, wholesalerName: w ? w.name : null,
@@ -1361,6 +1376,7 @@ const Crud = {
   },
 
   getDashboard(state, storeId, alertDays = 14, bestSellerDays = 30, bestSellerLimit = 20) {
+    const wholesalersById = new Map(state.wholesalers.map((w) => [w.id, w]));
     const lots = state.stockLots.filter((l) => l.storeId === storeId);
     const byIsbnQty = {};
     lots.forEach((l) => { byIsbnQty[l.isbn] = (byIsbnQty[l.isbn] || 0) + l.quantity; });
@@ -1380,7 +1396,7 @@ const Crud = {
       .sort((a, b) => String(a.consignmentDeadline).localeCompare(String(b.consignmentDeadline)))
       .map((lot) => {
         const book = state.books[lot.isbn];
-        const w = lot.wholesalerId ? state.wholesalers.find((x) => x.id === lot.wholesalerId) : null;
+        const w = lot.wholesalerId ? wholesalersById.get(lot.wholesalerId) : null;
         return {
           lotId: lot.id, isbn: lot.isbn, title: book ? book.title : "", wholesalerName: w ? w.name : null,
           quantity: lot.quantity, consignmentDeadline: lot.consignmentDeadline,
@@ -1409,13 +1425,33 @@ const Crud = {
   },
 
   getDashboardAll(state, alertDays = 14, bestSellerDays = 30, bestSellerLimit = 20) {
-    // 店舗別の内訳(在庫あり点数・合計冊数・返品アラート件数)
+    const storesById = new Map(state.stores.map((s) => [s.id, s]));
+    const wholesalersById = new Map(state.wholesalers.map((w) => [w.id, w]));
+    const today = todayStr();
+
+    // 店舗別の内訳(在庫あり点数・合計冊数・返品アラート件数)は
+    // 全ロットを一度だけ店舗別にグルーピングして集計する。
+    // (以前は店舗ごとにgetDashboard()を丸ごと呼び出しており、
+    //  店舗数が増えるほど全ロット・全売上を店舗数分再走査して遅くなっていた上、
+    //  そこで計算したbestSellers/zeroStockの結果もここでは使われず捨てられていた)
+    const lotsByStore = new Map();
+    state.stockLots.forEach((l) => {
+      let arr = lotsByStore.get(l.storeId);
+      if (!arr) { arr = []; lotsByStore.set(l.storeId, arr); }
+      arr.push(l);
+    });
     const byStore = state.stores.map((s) => {
-      const d = this.getDashboard(state, s.id, alertDays, bestSellerDays, bestSellerLimit);
+      const lots = lotsByStore.get(s.id) || [];
+      const byIsbnQty = {};
+      lots.forEach((l) => { byIsbnQty[l.isbn] = (byIsbnQty[l.isbn] || 0) + l.quantity; });
+      const qtysInStock = Object.values(byIsbnQty).filter((q) => q > 0);
+      const consignmentAlertCount = lots.filter((l) => l.purchaseType === "consignment" && l.quantity > 0 && l.status === "active" && l.consignmentDeadline
+        && daysBetween(today, l.consignmentDeadline) <= alertDays).length;
       return {
         storeId: s.id, storeName: s.name,
-        totalTitlesInStock: d.totalTitlesInStock, totalQuantityInStock: d.totalQuantityInStock,
-        consignmentAlertCount: d.consignmentAlerts.length,
+        totalTitlesInStock: qtysInStock.length,
+        totalQuantityInStock: qtysInStock.reduce((sum, q) => sum + q, 0),
+        consignmentAlertCount,
       };
     });
 
@@ -1426,15 +1462,14 @@ const Crud = {
       .filter((isbn) => byIsbnQtyAll[isbn] <= 0)
       .map((isbn) => ({ isbn, title: (state.books[isbn] || {}).title || "" }));
 
-    const today = todayStr();
     const consignmentAlerts = state.stockLots
       .filter((l) => l.purchaseType === "consignment" && l.quantity > 0 && l.status === "active" && l.consignmentDeadline
         && daysBetween(today, l.consignmentDeadline) <= alertDays)
       .sort((a, b) => String(a.consignmentDeadline).localeCompare(String(b.consignmentDeadline)))
       .map((lot) => {
         const book = state.books[lot.isbn];
-        const w = lot.wholesalerId ? state.wholesalers.find((x) => x.id === lot.wholesalerId) : null;
-        const st = state.stores.find((x) => x.id === lot.storeId);
+        const w = lot.wholesalerId ? wholesalersById.get(lot.wholesalerId) : null;
+        const st = storesById.get(lot.storeId);
         return {
           lotId: lot.id, isbn: lot.isbn, title: book ? book.title : "", wholesalerName: w ? w.name : null,
           storeName: st ? st.name : null,
@@ -1749,9 +1784,11 @@ function mapReturnCandidate(c) {
     days_until_deadline: c.daysUntilDeadline,
   };
 }
-function mapReturnHistory(r, state) {
+function mapReturnHistory(r, state, wholesalersById) {
   const book = state.books[r.isbn];
-  const w = r.wholesalerId ? state.wholesalers.find((x) => x.id === r.wholesalerId) : null;
+  const w = r.wholesalerId
+    ? (wholesalersById ? wholesalersById.get(r.wholesalerId) : state.wholesalers.find((x) => x.id === r.wholesalerId))
+    : null;
   return {
     id: r.id, isbn: r.isbn, title: book ? book.title : "", wholesaler_name: w ? w.name : null,
     quantity: r.quantity, return_date: r.returnDate, note: r.note,
@@ -2020,12 +2057,13 @@ const LocalApi = {
       const days = Number(qs.get("days") || "30");
       const since = new Date(); since.setDate(since.getDate() - days);
       const sinceStr = todayStrFromDate(since);
+      const storesById = new Map(state.stores.map((s) => [s.id, s]));
       return state.sales
         .filter((s) => s.saleDate >= sinceStr)
         .slice()
         .sort((a, b) => b.saleDate.localeCompare(a.saleDate))
         .map((r) => {
-          const st = state.stores.find((x) => x.id === r.storeId);
+          const st = storesById.get(r.storeId);
           return {
             id: r.id, isbn: r.isbn, title: (state.books[r.isbn] || {}).title || "", quantity: r.quantity,
             sale_date: r.saleDate, unit_price: r.unitPrice, oversold: r.oversold,
@@ -2049,9 +2087,10 @@ const LocalApi = {
     }
     if (method === "GET" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/returns\/history$/))) {
       const storeId = Number(m[1]);
+      const wholesalersById = new Map(state.wholesalers.map((w) => [w.id, w]));
       return state.returns.filter((r) => r.storeId === storeId)
         .slice().sort((a, b) => b.returnDate.localeCompare(a.returnDate))
-        .map((r) => mapReturnHistory(r, state));
+        .map((r) => mapReturnHistory(r, state, wholesalersById));
     }
 
     // ---- 棚卸 ----
@@ -4491,7 +4530,6 @@ const Router = {
     }
   });
 })();
-
 
 </script>
 </body>
