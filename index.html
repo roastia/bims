@@ -2124,14 +2124,28 @@ const SALES_CSV_TEMPLATE =
 
 const PageImport = {
   activeTab: "purchase",
+  selectedStoreId: null,
 
   async render(root, params) {
     if (params && params.tab) this.activeTab = params.tab;
-    const storeId = StoreState.currentStoreId;
+    if (this.selectedStoreId === null || !StoreState.stores.some((s) => s.id === this.selectedStoreId)) {
+      this.selectedStoreId = StoreState.currentStoreId;
+    }
+
+    const storeOptions = StoreState.stores
+      .map((s) => `<option value="${s.id}" ${s.id === this.selectedStoreId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`)
+      .join("");
 
     root.innerHTML = `
       <h1>CSV取込</h1>
       <p class="subtitle">卸会社からの入荷データ、POSレジの売上データをCSVファイルで取り込みます。</p>
+
+      <div class="card">
+        <div class="form-row" style="max-width:320px;">
+          <label>取込先の店舗</label>
+          <select id="import-store-select">${storeOptions}</select>
+        </div>
+      </div>
 
       <div class="tab-buttons">
         <button id="tab-purchase" class="${this.activeTab === "purchase" ? "active" : "secondary"}">入荷データ取込</button>
@@ -2141,14 +2155,21 @@ const PageImport = {
       <div id="tab-content"></div>
     `;
 
+    document.getElementById("import-store-select").onchange = (e) => {
+      this.selectedStoreId = parseInt(e.target.value, 10);
+      this.render(root);
+    };
+
     document.getElementById("tab-purchase").onclick = () => { this.activeTab = "purchase"; this.render(root); };
     document.getElementById("tab-sales").onclick = () => { this.activeTab = "sales"; this.render(root); };
 
     const content = document.getElementById("tab-content");
+    const storeId = this.selectedStoreId;
     if (this.activeTab === "purchase") {
       content.innerHTML = `
         <div class="card">
           <h2 style="margin-top:0;">入荷データCSV取込</h2>
+          <p class="barcode-hint">「${Util.escapeHtml(StoreState.stores.find((s) => s.id === storeId).name)}」の在庫として取り込まれます。</p>
           <p>列: <code>isbn, title, author, publisher, price, wholesaler_name, purchase_type(買切/委託), quantity, unit_cost, received_date, consignment_deadline</code></p>
           <p><button class="small secondary" id="dl-purchase-template">テンプレートCSVをダウンロード</button></p>
           <div class="csv-dropzone" id="purchase-dropzone">
@@ -2179,8 +2200,8 @@ const PageImport = {
       content.innerHTML = `
         <div class="card">
           <h2 style="margin-top:0;">POS売上データCSV取込</h2>
+          <p class="barcode-hint">「${Util.escapeHtml(StoreState.stores.find((s) => s.id === storeId).name)}」の売上・在庫として取り込まれます。在庫は委託(返品期限が近いもの優先)→買切の順に自動で引き当てられます。書誌が未登録のISBNはスキップされます(先に入荷登録してください)。</p>
           <p>列: <code>isbn, quantity, sale_date, unit_price</code></p>
-          <p class="barcode-hint">在庫は委託(返品期限が近いもの優先)→買切の順に自動で引き当てられます。書誌が未登録のISBNはスキップされます(先に入荷登録してください)。</p>
           <p><button class="small secondary" id="dl-sales-template">テンプレートCSVをダウンロード</button></p>
           <div class="csv-dropzone" id="sales-dropzone">
             <p class="csv-dropzone-badge">ドラッグ&ドロップ対応</p>
