@@ -216,6 +216,72 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
   color: var(--text);
 }
 
+.stock-count {
+  color: var(--text-muted);
+  font-size: 0.85em;
+  margin: 0 0 6px;
+}
+.stock-table-wrap {
+  overflow-x: auto;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.stock-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+.stock-table thead th {
+  text-align: left;
+  background: var(--bg);
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--border);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+}
+.stock-table tbody td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.stock-row {
+  cursor: pointer;
+}
+.stock-row:hover {
+  background: #eef3f8;
+}
+.stock-title {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: bold;
+}
+.stock-ellipsis {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stock-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.stock-table .mono {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.92em;
+  white-space: nowrap;
+}
+.stock-detail-row td {
+  background: #fbfbfc;
+  padding: 14px 16px;
+}
+.stock-detail-inner table {
+  margin-top: 4px;
+}
+
 </style>
 </head>
 <body>
@@ -1616,6 +1682,8 @@ const PageDashboard = {
 
 // ---- 11_page_stock.js ----
 const PageStock = {
+  expandedIds: {},
+
   async render(root, params) {
     root.innerHTML = `<p class="loading">読み込み中...</p>`;
     const storeId = StoreState.currentStoreId;
@@ -1631,7 +1699,7 @@ const PageStock = {
 
     root.innerHTML = `
       <h1>在庫一覧</h1>
-      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} の在庫。書籍ごとに卸会社別の内訳を確認できます。</p>
+      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} の在庫。行をクリックすると卸会社別の内訳とタグを確認・編集できます。</p>
 
       <div class="card">
         <div class="form-inline">
@@ -1660,44 +1728,89 @@ const PageStock = {
       return;
     }
 
-    listEl.innerHTML = items.map((item) => this.renderItem(item)).join("");
+    listEl.innerHTML = `
+      <p class="stock-count">${items.length}件</p>
+      <div class="stock-table-wrap">
+        <table class="stock-table">
+          <thead>
+            <tr>
+              <th>書名</th>
+              <th>著者</th>
+              <th>出版社</th>
+              <th>ISBN</th>
+              <th>タグ</th>
+              <th class="num">合計在庫</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map((item) => this.renderRow(item)).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
 
-    // タグ追加/削除のイベントを紐づけ
     items.forEach((item) => {
-      const addBtn = document.getElementById(`tagadd-${cssId(item.isbn)}`);
+      const id = cssId(item.isbn);
+      const toggleBtn = document.getElementById(`toggle-${id}`);
+      const mainRow = document.getElementById(`row-${id}`);
+      const detailRow = document.getElementById(`detail-${id}`);
+      const toggle = () => {
+        const isOpen = detailRow.style.display !== "none";
+        detailRow.style.display = isOpen ? "none" : "table-row";
+        toggleBtn.textContent = isOpen ? "詳細" : "閉じる";
+        this.expandedIds[item.isbn] = !isOpen;
+      };
+      if (this.expandedIds[item.isbn]) toggle();
+      toggleBtn.onclick = (e) => { e.stopPropagation(); toggle(); };
+      mainRow.onclick = () => toggle();
+
+      const addBtn = document.getElementById(`tagadd-${id}`);
       if (addBtn) {
-        addBtn.onclick = async () => {
-          const input = document.getElementById(`taginput-${cssId(item.isbn)}`);
+        addBtn.onclick = async (e) => {
+          e.stopPropagation();
+          const input = document.getElementById(`taginput-${id}`);
           const name = input.value.trim();
           if (!name) return;
           try {
             await Api.post(`/api/stores/${storeId}/books/${encodeURIComponent(item.isbn)}/tags`, { tag_name: name });
             Util.toast("タグを追加しました", "success");
-            Router.reload();
-          } catch (e) {
-            Util.toast("タグ追加に失敗しました: " + e.message, "error");
+            this.expandedIds[item.isbn] = true;
+            this.render(root, params);
+          } catch (e2) {
+            Util.toast("タグ追加に失敗しました: " + e2.message, "error");
           }
         };
       }
+      const taginputEl = document.getElementById(`taginput-${id}`);
+      if (taginputEl) {
+        taginputEl.onclick = (e) => e.stopPropagation();
+        taginputEl.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") addBtn.click();
+        });
+      }
       item.tags.forEach((tagName) => {
-        const delBtn = document.getElementById(`tagdel-${cssId(item.isbn)}-${cssId(tagName)}`);
+        const delBtn = document.getElementById(`tagdel-${id}-${cssId(tagName)}`);
         if (delBtn) {
-          delBtn.onclick = async () => {
-            // タグID解決のため一覧から探す(簡易実装: 全タグ取得して名前でマッチ)
+          delBtn.onclick = async (e) => {
+            e.stopPropagation();
             const allTags = await Api.get("/api/tags");
             const tag = allTags.find((t) => t.name === tagName);
             if (!tag) return;
             await Api.del(`/api/stores/${storeId}/books/${encodeURIComponent(item.isbn)}/tags/${tag.id}`);
             Util.toast("タグを削除しました", "success");
-            Router.reload();
+            this.expandedIds[item.isbn] = true;
+            this.render(root, params);
           };
         }
       });
     });
   },
 
-  renderItem(item) {
+  renderRow(item) {
     const id = cssId(item.isbn);
+    const tagsText = item.tags.length ? item.tags.join(", ") : "-";
+
     const lotRows = item.lots.map((lot) => `
       <tr>
         <td><span class="${Util.purchaseTypeBadgeClass(lot.purchase_type)}">${Util.purchaseTypeLabel(lot.purchase_type)}</span></td>
@@ -1714,34 +1827,35 @@ const PageStock = {
     `).join("");
 
     return `
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;">
-          <div>
-            <strong>${Util.escapeHtml(item.title || "(書名未登録)")}</strong>
-            <div style="color:var(--text-muted); font-size:0.85em;">
-              ${Util.escapeHtml(item.author || "")} / ${Util.escapeHtml(item.publisher || "")} / ISBN: ${Util.escapeHtml(item.isbn)}
-              ${item.price ? " / " + Util.fmtYen(item.price) : ""}
+      <tr class="stock-row" id="row-${id}">
+        <td class="stock-title" title="${Util.escapeHtml(item.title || "")}">${Util.escapeHtml(item.title || "(書名未登録)")}</td>
+        <td class="stock-ellipsis">${Util.escapeHtml(item.author || "")}</td>
+        <td class="stock-ellipsis">${Util.escapeHtml(item.publisher || "")}</td>
+        <td class="mono">${Util.escapeHtml(item.isbn)}</td>
+        <td class="stock-ellipsis">${Util.escapeHtml(tagsText)}</td>
+        <td class="num">${item.total_quantity}</td>
+        <td><button class="small secondary" id="toggle-${id}">詳細</button></td>
+      </tr>
+      <tr class="stock-detail-row" id="detail-${id}" style="display:none;">
+        <td colspan="7">
+          <div class="stock-detail-inner">
+            <div style="color:var(--text-muted); font-size:0.85em; margin-bottom:8px;">
+              ${item.price ? Util.fmtYen(item.price) : ""}
             </div>
+            <div style="margin:6px 0;">
+              ${tagPills || '<span class="empty-msg" style="font-style:normal;">タグ未設定</span>'}
+            </div>
+            <div class="form-inline" style="margin-bottom:10px;">
+              <input type="text" id="taginput-${id}" placeholder="新しいタグ(例: 文庫棚A-3)" style="max-width:220px;">
+              <button class="small" id="tagadd-${id}">タグ追加</button>
+            </div>
+            <table>
+              <thead><tr><th>仕入形態</th><th>卸会社</th><th>数量</th><th>入荷日</th><th>返品期限</th><th>備考</th></tr></thead>
+              <tbody>${lotRows || '<tr><td colspan="6" class="empty-msg">在庫ロットがありません</td></tr>'}</tbody>
+            </table>
           </div>
-          <div class="stat-box">
-            <div class="stat-number" style="font-size:1.5em;">${item.total_quantity}</div>
-            <div class="stat-label">合計在庫</div>
-          </div>
-        </div>
-
-        <div style="margin:10px 0;">
-          ${tagPills || '<span class="empty-msg" style="font-style:normal;">タグ未設定</span>'}
-        </div>
-        <div class="form-inline" style="margin-bottom:10px;">
-          <input type="text" id="taginput-${id}" placeholder="新しいタグ(例: 文庫棚A-3)" style="max-width:220px;">
-          <button class="small" id="tagadd-${id}">タグ追加</button>
-        </div>
-
-        <table>
-          <thead><tr><th>仕入形態</th><th>卸会社</th><th>数量</th><th>入荷日</th><th>返品期限</th><th>備考</th></tr></thead>
-          <tbody>${lotRows || '<tr><td colspan="6" class="empty-msg">在庫ロットがありません</td></tr>'}</tbody>
-        </table>
-      </div>
+        </td>
+      </tr>
     `;
   },
 };
