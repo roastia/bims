@@ -460,7 +460,6 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
   white-space: nowrap;
 }
 .detail-tags {
-  flex: 1;
   min-width: 0;
 }
 .tiny-link {
@@ -487,6 +486,12 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
 }
 .detail-move-toggle {
   margin-top: 4px;
+  display: inline-block;
+}
+.stock-detail-book-edit {
+  margin-bottom: 10px;
+}
+.detail-bookedit-toggle {
   display: inline-block;
 }
 
@@ -3087,6 +3092,34 @@ const PageStock = {
     td.innerHTML = this.buildDetailHtml(item);
 
     const id = cssId(item.isbn);
+
+    const bookEditToggleBtn = document.getElementById(`bookedit-toggle-${id}`);
+    const bookEditFormEl = document.getElementById(`bookedit-form-${id}`);
+    if (bookEditToggleBtn && bookEditFormEl) {
+      bookEditToggleBtn.onclick = async (e) => {
+        e.stopPropagation();
+        const showing = bookEditFormEl.style.display !== "none";
+        if (showing) {
+          bookEditFormEl.style.display = "none";
+          bookEditToggleBtn.textContent = "▸ 書誌情報を編集(書名・著者・価格など)";
+          return;
+        }
+        bookEditFormEl.style.display = "block";
+        bookEditToggleBtn.textContent = "▾ 書誌情報を編集(書名・著者・価格など)";
+        if (!bookEditFormEl.dataset.loaded) {
+          bookEditFormEl.innerHTML = `<p class="loading">読み込み中...</p>`;
+          try {
+            const book = await Api.get(`/api/books/${encodeURIComponent(item.isbn)}`);
+            bookEditFormEl.innerHTML = this.buildBookEditFormHtml(id, book);
+            bookEditFormEl.dataset.loaded = "1";
+            this.wireBookEditForm(id, item, root, params);
+          } catch (e2) {
+            bookEditFormEl.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e2.message)}</p>`;
+          }
+        }
+      };
+    }
+
     (item.tags_by_store || []).forEach((sec) => {
       const secId = `${id}-${sec.store_id}`;
 
@@ -3330,9 +3363,62 @@ const PageStock = {
         <div style="color:var(--text-muted); font-size:0.85em; margin-bottom:8px;">
           ISBN: ${Util.escapeHtml(item.isbn)}
         </div>
+        <div class="stock-detail-book-edit">
+          <button class="tiny-link detail-bookedit-toggle" id="bookedit-toggle-${id}">▸ 書誌情報を編集(書名・著者・価格など)</button>
+          <div class="stock-move-form" id="bookedit-form-${id}" style="display:none;"></div>
+        </div>
         ${sections}
       </div>
     `;
+  },
+
+  // 在庫一覧の詳細内で書誌情報(書名・著者・出版社・本体価格など)を直接編集するための
+  // インライン編集フォーム。マスタ管理の書誌編集と同じAPI(POST /api/books)を使う。
+  buildBookEditFormHtml(id, book) {
+    return `
+      <div class="form-inline detail-move-fields">
+        <div class="form-row"><label>書名</label><input type="text" id="bookedit-title-${id}" value="${Util.escapeHtml(book.title || "")}"></div>
+        <div class="form-row"><label>著者</label><input type="text" id="bookedit-author-${id}" value="${Util.escapeHtml(book.author || "")}"></div>
+        <div class="form-row"><label>出版社</label><input type="text" id="bookedit-publisher-${id}" value="${Util.escapeHtml(book.publisher || "")}"></div>
+        <div class="form-row"><label>本体価格(円・税別)</label><input type="number" id="bookedit-price-${id}" value="${book.price || 0}" style="width:100px;"></div>
+      </div>
+      <div class="form-inline detail-move-fields">
+        <div class="form-row"><label>分類(Cコード)</label><input type="text" id="bookedit-ccode-${id}" value="${Util.escapeHtml(book.c_code || "")}" style="width:100px;"></div>
+        <div class="form-row"><label>分類表示テキスト</label><input type="text" id="bookedit-classification-${id}" value="${Util.escapeHtml(book.classification_text || "")}"></div>
+        <div class="form-row"><label>雑誌コード(任意)</label><input type="text" id="bookedit-magazine-${id}" value="${Util.escapeHtml(book.magazine_code || "")}" style="width:100px;"></div>
+        <div class="form-row" style="flex:1; min-width:160px;"><label>表紙画像URL(任意)</label><input type="text" id="bookedit-cover-${id}" value="${Util.escapeHtml(book.cover_url || "")}"></div>
+      </div>
+      <button class="small" id="bookedit-save-${id}">保存</button>
+    `;
+  },
+
+  wireBookEditForm(id, item, root, params) {
+    const saveBtn = document.getElementById(`bookedit-save-${id}`);
+    if (!saveBtn) return;
+    saveBtn.onclick = async (e) => {
+      e.stopPropagation();
+      const titleValue = document.getElementById(`bookedit-title-${id}`).value.trim();
+      if (!titleValue) { Util.toast("書名を入力してください", "warning"); return; }
+      try {
+        await Api.post("/api/books", {
+          isbn: item.isbn,
+          title: titleValue,
+          author: document.getElementById(`bookedit-author-${id}`).value,
+          publisher: document.getElementById(`bookedit-publisher-${id}`).value,
+          price: parseInt(document.getElementById(`bookedit-price-${id}`).value || "0", 10),
+          c_code: document.getElementById(`bookedit-ccode-${id}`).value,
+          classification_text: document.getElementById(`bookedit-classification-${id}`).value,
+          magazine_code: document.getElementById(`bookedit-magazine-${id}`).value,
+          cover_url: document.getElementById(`bookedit-cover-${id}`).value,
+          is_manual_entry: true,
+        });
+        Util.toast("書誌情報を更新しました", "success");
+        this.expandedIds[item.isbn] = true;
+        this.loadAndRenderList(root, params);
+      } catch (e2) {
+        Util.toast("更新に失敗しました: " + e2.message, "error");
+      }
+    };
   },
 };
 
