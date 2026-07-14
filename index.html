@@ -757,15 +757,15 @@ const Crud = {
     const byIsbn = {};
     lots.forEach((l) => { (byIsbn[l.isbn] = byIsbn[l.isbn] || []).push(l); });
 
+    const store = state.stores.find((s) => s.id === storeId);
+    const storeName = store ? store.name : "";
+    // 複数ワード検索(スペース区切り・すべての語を含む場合のみヒット)に対応
+    const terms = (query || "").trim().split(/[\s\u3000]+/).filter(Boolean).map((t) => t.toLowerCase());
+
     const results = [];
     for (const isbn of Object.keys(byIsbn)) {
       const book = state.books[isbn];
       if (!book) continue;
-      if (query) {
-        const q = query.toLowerCase();
-        const hay = `${book.isbn} ${book.title} ${book.author} ${book.publisher}`.toLowerCase();
-        if (!hay.includes(q)) continue;
-      }
       const lotList = byIsbn[isbn];
       const totalQty = lotList.reduce((s, l) => s + l.quantity, 0);
       const floorQty = lotList.filter((l) => (l.location || "floor") === "floor").reduce((s, l) => s + l.quantity, 0);
@@ -782,6 +782,16 @@ const Crud = {
           status: l.status, note: l.note,
         };
       });
+
+      if (terms.length) {
+        const wholesalerNames = [...new Set(lotOuts.map((l) => l.wholesalerName).filter(Boolean))];
+        const hay = [
+          book.isbn, book.title, book.author, book.publisher,
+          storeName, ...tags, ...wholesalerNames,
+        ].join(" ").toLowerCase();
+        const matchesAll = terms.every((t) => hay.includes(t));
+        if (!matchesAll) continue;
+      }
       results.push({
         isbn, title: book.title, author: book.author, publisher: book.publisher, price: book.price,
         totalQuantity: totalQty, floorQuantity: floorQty, warehouseQuantity: warehouseQty, tags, lots: lotOuts,
@@ -2136,8 +2146,8 @@ const PageStock = {
       <div class="card">
         <div class="form-inline">
           <div class="form-row" style="flex:1; min-width:220px;">
-            <label>書名・著者・出版社・ISBNで検索</label>
-            <input type="text" id="stock-search" value="${Util.escapeHtml(q)}" placeholder="キーワード">
+            <label>書名・著者・出版社・ISBN・タグ・店舗・卸会社で検索(スペース区切りで複数ワード検索も可能)</label>
+            <input type="text" id="stock-search" value="${Util.escapeHtml(q)}" placeholder="例: 文庫 日販">
           </div>
           <button id="stock-search-btn">検索</button>
         </div>
