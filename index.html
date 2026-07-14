@@ -514,7 +514,6 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
     <a href="#/dashboard" data-route="/dashboard">ダッシュボード</a>
     <a href="#/stock" data-route="/stock">在庫一覧</a>
     <a href="#/receive" data-route="/receive">入荷登録</a>
-    <a href="#/import" data-route="/import">CSV取込</a>
     <a href="#/sales" data-route="/sales">販売履歴</a>
     <a href="#/returns" data-route="/returns">返品管理</a>
     <a href="#/stocktake" data-route="/stocktake">棚卸</a>
@@ -1025,6 +1024,69 @@ const Csv = {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
+  },
+
+  // ドラッグ&ドロップ + クリックでファイル選択できるドロップゾーンの共通セットアップ
+  // (入荷登録・販売履歴のCSV取込セクションで共用する)
+  setupDropzone(zoneId, inputId, filenameId) {
+    const zone = document.getElementById(zoneId);
+    const input = document.getElementById(inputId);
+    const filenameEl = document.getElementById(filenameId);
+    if (!zone || !input || !filenameEl) return;
+
+    const showFilename = () => {
+      if (input.files.length) {
+        filenameEl.textContent = `選択中: ${input.files[0].name}`;
+        zone.classList.add("has-file");
+      } else {
+        filenameEl.textContent = "";
+        zone.classList.remove("has-file");
+      }
+    };
+
+    zone.onclick = () => input.click();
+    input.onchange = showFilename;
+
+    ["dragenter", "dragover"].forEach((evt) => {
+      zone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        zone.classList.add("dragover");
+      });
+    });
+    ["dragleave", "dragend"].forEach((evt) => {
+      zone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        zone.classList.remove("dragover");
+      });
+    });
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      zone.classList.remove("dragover");
+      const files = e.dataTransfer.files;
+      if (!files.length) return;
+      const csvFile = Array.from(files).find((f) => f.name.toLowerCase().endsWith(".csv")) || files[0];
+      if (!csvFile.name.toLowerCase().endsWith(".csv")) {
+        Util.toast("CSVファイルをドロップしてください", "warning");
+        return;
+      }
+      const dt = new DataTransfer();
+      dt.items.add(csvFile);
+      input.files = dt.files;
+      showFilename();
+    });
+  },
+
+  // CSV取込結果(成功/エラー/警告件数)の共通表示処理
+  renderImportResult(el, result) {
+    Util.toast(`取込完了: 成功${result.success_rows}件 / 失敗${result.error_rows}件`, result.error_rows > 0 ? "warning" : "success");
+    el.innerHTML = `
+      <p style="margin-top:14px;">全${result.total_rows}行中、成功 ${result.success_rows}件、エラー ${result.error_rows}件</p>
+      ${result.errors.length ? `<div class="csv-errors"><strong>エラー</strong><ul>${result.errors.map((e) => `<li>${Util.escapeHtml(e)}</li>`).join("")}</ul></div>` : ""}
+      ${result.warnings.length ? `<div class="csv-warnings"><strong>警告</strong><ul>${result.warnings.map((w) => `<li>${Util.escapeHtml(w)}</li>`).join("")}</ul></div>` : ""}
+    `;
   },
 };
 
@@ -3145,6 +3207,11 @@ function cssId(s) {
   return String(s).replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+const PURCHASE_CSV_TEMPLATE =
+  "isbn,title,author,publisher,price,wholesaler_name,purchase_type,quantity,unit_cost,received_date,consignment_deadline,location\n" +
+  "'9784000000000,サンプル書名,サンプル著者,サンプル出版社,1500,日販,買切,10,1050,2026-07-01,,店内\n" +
+  "'9784000000001,サンプル書名2,サンプル著者2,サンプル出版社2,1200,トーハン,委託,5,900,2026-07-01,2026-09-30,倉庫\n";
+
 const PageReceive = {
   currentBook: null, // { isbn, title, author, publisher, price, c_code, classification_text }
   selectedStoreId: null,
@@ -3247,6 +3314,22 @@ const PageReceive = {
           <tbody id="session-log-body">${this.renderLogRows()}</tbody>
         </table>
       </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;">CSV取込(入荷データをまとめて取り込む)</h2>
+        <p class="barcode-hint">「${Util.escapeHtml(StoreState.stores.find((s) => s.id === storeId).name)}」(上の「入荷先店舗」で選択中の店舗)の在庫として取り込まれます。</p>
+        <p>列: <code>isbn, title, author, publisher, price, wholesaler_name, purchase_type(買切/委託), quantity, unit_cost, received_date, consignment_deadline, location(店内/倉庫・省略時は店内)</code></p>
+        <p class="barcode-hint">ISBNをExcelで開くと指数表記(例: 9.78428E+12)になることがあります。テンプレートのように先頭に <code>'</code> を付けると文字列として正しく表示されます(取込時は自動的に取り除かれます)。</p>
+        <p><button class="small secondary" id="dl-purchase-template">テンプレートCSVをダウンロード</button></p>
+        <div class="csv-dropzone" id="purchase-dropzone">
+          <p class="csv-dropzone-badge">ドラッグ&ドロップ対応</p>
+          <p class="csv-dropzone-text">ここにCSVファイルをドラッグ&ドロップ<br>またはクリックしてファイルを選択</p>
+          <p class="csv-dropzone-filename" id="purchase-filename"></p>
+        </div>
+        <input type="file" id="purchase-file" accept=".csv" style="display:none;">
+        <button id="purchase-upload-btn">取込実行</button>
+        <div id="purchase-result"></div>
+      </div>
     `;
 
     document.getElementById("batch-store").addEventListener("change", (e) => {
@@ -3298,6 +3381,21 @@ const PageReceive = {
       e.preventDefault();
       this.submit(storeId);
     });
+
+    document.getElementById("dl-purchase-template").onclick = () => {
+      Csv.downloadText("purchase_template.csv", PURCHASE_CSV_TEMPLATE);
+    };
+    Csv.setupDropzone("purchase-dropzone", "purchase-file", "purchase-filename");
+    document.getElementById("purchase-upload-btn").onclick = async () => {
+      const fileInput = document.getElementById("purchase-file");
+      if (!fileInput.files.length) { Util.toast("CSVファイルを選択してください", "warning"); return; }
+      try {
+        const result = await Api.uploadFile(`/api/stores/${storeId}/stock/import-purchase-csv`, fileInput.files[0]);
+        Csv.renderImportResult(document.getElementById("purchase-result"), result);
+      } catch (e) {
+        Util.toast("取込に失敗しました: " + e.message, "error");
+      }
+    };
   },
 
   renderLogRows() {
@@ -3451,190 +3549,20 @@ const PageReceive = {
   },
 };
 
-const PURCHASE_CSV_TEMPLATE =
-  "isbn,title,author,publisher,price,wholesaler_name,purchase_type,quantity,unit_cost,received_date,consignment_deadline,location\n" +
-  "'9784000000000,サンプル書名,サンプル著者,サンプル出版社,1500,日販,買切,10,1050,2026-07-01,,店内\n" +
-  "'9784000000001,サンプル書名2,サンプル著者2,サンプル出版社2,1200,トーハン,委託,5,900,2026-07-01,2026-09-30,倉庫\n";
-
 const SALES_CSV_TEMPLATE =
   "isbn,quantity,sale_date,unit_price\n" +
   "'9784000000000,2,2026-07-10,1500\n" +
   "'9784000000001,1,2026-07-11,1200\n";
 
-const PageImport = {
-  activeTab: "purchase",
-  selectedStoreId: null,
-
-  async render(root, params) {
-    if (params && params.tab) this.activeTab = params.tab;
-    if (this.selectedStoreId === null || !StoreState.stores.some((s) => s.id === this.selectedStoreId)) {
-      this.selectedStoreId = StoreState.currentStoreId;
-    }
-
-    const storeOptions = StoreState.stores
-      .map((s) => `<option value="${s.id}" ${s.id === this.selectedStoreId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`)
-      .join("");
-
-    root.innerHTML = `
-      <h1>CSV取込</h1>
-      <p class="subtitle">卸会社からの入荷データ、POSレジの販売データをCSVファイルで取り込みます。</p>
-
-      <div class="card">
-        <div class="form-row" style="max-width:320px;">
-          <label>取込先の店舗</label>
-          <select id="import-store-select">${storeOptions}</select>
-        </div>
-      </div>
-
-      <div class="tab-buttons">
-        <button id="tab-purchase" class="${this.activeTab === "purchase" ? "active" : "secondary"}">入荷データ取込</button>
-        <button id="tab-sales" class="${this.activeTab === "sales" ? "active" : "secondary"}">POS販売データ取込</button>
-      </div>
-
-      <div id="tab-content"></div>
-    `;
-
-    document.getElementById("import-store-select").onchange = (e) => {
-      this.selectedStoreId = parseInt(e.target.value, 10);
-      this.render(root);
-    };
-
-    document.getElementById("tab-purchase").onclick = () => { this.activeTab = "purchase"; this.render(root); };
-    document.getElementById("tab-sales").onclick = () => { this.activeTab = "sales"; this.render(root); };
-
-    const content = document.getElementById("tab-content");
-    const storeId = this.selectedStoreId;
-    if (this.activeTab === "purchase") {
-      content.innerHTML = `
-        <div class="card">
-          <h2 style="margin-top:0;">入荷データCSV取込</h2>
-          <p class="barcode-hint">「${Util.escapeHtml(StoreState.stores.find((s) => s.id === storeId).name)}」の在庫として取り込まれます。</p>
-          <p>列: <code>isbn, title, author, publisher, price, wholesaler_name, purchase_type(買切/委託), quantity, unit_cost, received_date, consignment_deadline, location(店内/倉庫・省略時は店内)</code></p>
-          <p class="barcode-hint">ISBNをExcelで開くと指数表記(例: 9.78428E+12)になることがあります。テンプレートのように先頭に <code>'</code> を付けると文字列として正しく表示されます(取込時は自動的に取り除かれます)。</p>
-          <p><button class="small secondary" id="dl-purchase-template">テンプレートCSVをダウンロード</button></p>
-          <div class="csv-dropzone" id="purchase-dropzone">
-            <p class="csv-dropzone-badge">ドラッグ&ドロップ対応</p>
-            <p class="csv-dropzone-text">ここにCSVファイルをドラッグ&ドロップ<br>またはクリックしてファイルを選択</p>
-            <p class="csv-dropzone-filename" id="purchase-filename"></p>
-          </div>
-          <input type="file" id="purchase-file" accept=".csv" style="display:none;">
-          <button id="purchase-upload-btn">取込実行</button>
-          <div id="purchase-result"></div>
-        </div>
-      `;
-      document.getElementById("dl-purchase-template").onclick = () => {
-        Csv.downloadText("purchase_template.csv", PURCHASE_CSV_TEMPLATE);
-      };
-      this.setupDropzone("purchase-dropzone", "purchase-file", "purchase-filename");
-      document.getElementById("purchase-upload-btn").onclick = async () => {
-        const fileInput = document.getElementById("purchase-file");
-        if (!fileInput.files.length) { Util.toast("CSVファイルを選択してください", "warning"); return; }
-        try {
-          const result = await Api.uploadFile(`/api/stores/${storeId}/stock/import-purchase-csv`, fileInput.files[0]);
-          this.renderResult(document.getElementById("purchase-result"), result);
-        } catch (e) {
-          Util.toast("取込に失敗しました: " + e.message, "error");
-        }
-      };
-    } else {
-      content.innerHTML = `
-        <div class="card">
-          <h2 style="margin-top:0;">POS販売データCSV取込</h2>
-          <p class="barcode-hint">「${Util.escapeHtml(StoreState.stores.find((s) => s.id === storeId).name)}」の販売・在庫として取り込まれます。在庫は委託(返品期限が近いもの優先)→買切の順に自動で引き当てられます。書誌が未登録のISBNはスキップされます(先に入荷登録してください)。</p>
-          <p>列: <code>isbn, quantity, sale_date, unit_price</code></p>
-          <p><button class="small secondary" id="dl-sales-template">テンプレートCSVをダウンロード</button></p>
-          <div class="csv-dropzone" id="sales-dropzone">
-            <p class="csv-dropzone-badge">ドラッグ&ドロップ対応</p>
-            <p class="csv-dropzone-text">ここにCSVファイルをドラッグ&ドロップ<br>またはクリックしてファイルを選択</p>
-            <p class="csv-dropzone-filename" id="sales-filename"></p>
-          </div>
-          <input type="file" id="sales-file" accept=".csv" style="display:none;">
-          <button id="sales-upload-btn">取込実行</button>
-          <div id="sales-result"></div>
-        </div>
-      `;
-      document.getElementById("dl-sales-template").onclick = () => {
-        Csv.downloadText("sales_template.csv", SALES_CSV_TEMPLATE);
-      };
-      this.setupDropzone("sales-dropzone", "sales-file", "sales-filename");
-      document.getElementById("sales-upload-btn").onclick = async () => {
-        const fileInput = document.getElementById("sales-file");
-        if (!fileInput.files.length) { Util.toast("CSVファイルを選択してください", "warning"); return; }
-        try {
-          const result = await Api.uploadFile(`/api/stores/${storeId}/sales/import-csv`, fileInput.files[0]);
-          this.renderResult(document.getElementById("sales-result"), result);
-        } catch (e) {
-          Util.toast("取込に失敗しました: " + e.message, "error");
-        }
-      };
-    }
-  },
-
-  setupDropzone(zoneId, inputId, filenameId) {
-    const zone = document.getElementById(zoneId);
-    const input = document.getElementById(inputId);
-    const filenameEl = document.getElementById(filenameId);
-
-    const showFilename = () => {
-      if (input.files.length) {
-        filenameEl.textContent = `選択中: ${input.files[0].name}`;
-        zone.classList.add("has-file");
-      } else {
-        filenameEl.textContent = "";
-        zone.classList.remove("has-file");
-      }
-    };
-
-    zone.onclick = () => input.click();
-    input.onchange = showFilename;
-
-    ["dragenter", "dragover"].forEach((evt) => {
-      zone.addEventListener(evt, (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        zone.classList.add("dragover");
-      });
-    });
-    ["dragleave", "dragend"].forEach((evt) => {
-      zone.addEventListener(evt, (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        zone.classList.remove("dragover");
-      });
-    });
-    zone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      zone.classList.remove("dragover");
-      const files = e.dataTransfer.files;
-      if (!files.length) return;
-      const csvFile = Array.from(files).find((f) => f.name.toLowerCase().endsWith(".csv")) || files[0];
-      if (!csvFile.name.toLowerCase().endsWith(".csv")) {
-        Util.toast("CSVファイルをドロップしてください", "warning");
-        return;
-      }
-      const dt = new DataTransfer();
-      dt.items.add(csvFile);
-      input.files = dt.files;
-      showFilename();
-    });
-  },
-
-  renderResult(el, result) {
-    Util.toast(`取込完了: 成功${result.success_rows}件 / 失敗${result.error_rows}件`, result.error_rows > 0 ? "warning" : "success");
-    el.innerHTML = `
-      <p style="margin-top:14px;">全${result.total_rows}行中、成功 ${result.success_rows}件、エラー ${result.error_rows}件</p>
-      ${result.errors.length ? `<div class="csv-errors"><strong>エラー</strong><ul>${result.errors.map((e) => `<li>${Util.escapeHtml(e)}</li>`).join("")}</ul></div>` : ""}
-      ${result.warnings.length ? `<div class="csv-warnings"><strong>警告</strong><ul>${result.warnings.map((w) => `<li>${Util.escapeHtml(w)}</li>`).join("")}</ul></div>` : ""}
-    `;
-  },
-};
-
 const PageSales = {
   salesPage: { pageSize: Pagination.loadPageSize("sales_page_size", 50), currentPage: 1 },
+  importStoreId: null,
 
   async render(root) {
     root.innerHTML = `<p class="loading">読み込み中...</p>`;
+    if (this.importStoreId === null || !StoreState.stores.some((s) => s.id === this.importStoreId)) {
+      this.importStoreId = StoreState.currentStoreId;
+    }
     let rows;
     try {
       rows = await Api.get(`/api/sales?days=90`);
@@ -3656,6 +3584,11 @@ const PageSales = {
         </tr>`).join("")
       : `<tr><td colspan="6" class="empty-msg">直近90日の販売データがありません</td></tr>`;
 
+    const storeOptions = StoreState.stores
+      .map((s) => `<option value="${s.id}" ${s.id === this.importStoreId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`)
+      .join("");
+    const importStoreName = Util.escapeHtml((StoreState.stores.find((s) => s.id === this.importStoreId) || {}).name || "");
+
     root.innerHTML = `
       <h1>販売履歴</h1>
       <p class="subtitle">全店舗の直近90日の販売履歴(POS取込データ)</p>
@@ -3670,9 +3603,47 @@ const PageSales = {
         </table>
         ${Pagination.controlsHtml("sales", this.salesPage.currentPage, slice.totalPages)}
       </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;">CSV取込(POS販売データをまとめて取り込む)</h2>
+        <div class="form-row" style="max-width:320px;">
+          <label>取込先店舗<span class="field-required-badge">必須</span></label>
+          <select id="sales-import-store-select">${storeOptions}</select>
+        </div>
+        <p class="barcode-hint">「${importStoreName}」の販売・在庫として取り込まれます。在庫は委託(返品期限が近いもの優先)→買切の順に自動で引き当てられます。書誌が未登録のISBNはスキップされます(先に入荷登録してください)。</p>
+        <p>列: <code>isbn, quantity, sale_date, unit_price</code></p>
+        <p><button class="small secondary" id="dl-sales-template">テンプレートCSVをダウンロード</button></p>
+        <div class="csv-dropzone" id="sales-dropzone">
+          <p class="csv-dropzone-badge">ドラッグ&ドロップ対応</p>
+          <p class="csv-dropzone-text">ここにCSVファイルをドラッグ&ドロップ<br>またはクリックしてファイルを選択</p>
+          <p class="csv-dropzone-filename" id="sales-filename"></p>
+        </div>
+        <input type="file" id="sales-file" accept=".csv" style="display:none;">
+        <button id="sales-upload-btn">取込実行</button>
+        <div id="sales-result"></div>
+      </div>
     `;
 
     Pagination.wire("sales", this.salesPage, "sales_page_size", () => this.render(root));
+
+    document.getElementById("sales-import-store-select").onchange = (e) => {
+      this.importStoreId = parseInt(e.target.value, 10);
+      this.render(root);
+    };
+    document.getElementById("dl-sales-template").onclick = () => {
+      Csv.downloadText("sales_template.csv", SALES_CSV_TEMPLATE);
+    };
+    Csv.setupDropzone("sales-dropzone", "sales-file", "sales-filename");
+    document.getElementById("sales-upload-btn").onclick = async () => {
+      const fileInput = document.getElementById("sales-file");
+      if (!fileInput.files.length) { Util.toast("CSVファイルを選択してください", "warning"); return; }
+      try {
+        const result = await Api.uploadFile(`/api/stores/${this.importStoreId}/sales/import-csv`, fileInput.files[0]);
+        Csv.renderImportResult(document.getElementById("sales-result"), result);
+      } catch (e) {
+        Util.toast("取込に失敗しました: " + e.message, "error");
+      }
+    };
   },
 };
 
@@ -4403,7 +4374,6 @@ const Router = {
     "/dashboard": PageDashboard,
     "/stock": PageStock,
     "/receive": PageReceive,
-    "/import": PageImport,
     "/sales": PageSales,
     "/returns": PageReturns,
     "/stocktake": PageStocktake,
@@ -4411,6 +4381,7 @@ const Router = {
     "/data": PageDashboard, // データ管理はダッシュボードに統合(旧リンク互換のため残す)
     "/transfer": PageStock, // 在庫移動は在庫一覧に統合(旧リンク互換のため残す)
     "/analytics": PageDashboard, // グラフはダッシュボードに統合(旧リンク互換のため残す)
+    "/import": PageReceive, // CSV取込は入荷登録・販売履歴に統合(旧リンク互換のため残す)
   },
 
   parseHash() {
