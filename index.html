@@ -367,6 +367,22 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
   .chart-bar-row { grid-template-columns: 100px 1fr 50px; }
 }
 
+.stock-detail-store-section {
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px dashed var(--border);
+}
+.stock-detail-store-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+.stock-detail-store-section h4 {
+  margin: 0 0 6px;
+  font-size: 0.95em;
+  color: var(--primary-dark);
+}
+
 </style>
 </head>
 <body>
@@ -386,10 +402,6 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
     <a href="#/analytics" data-route="/analytics">グラフ</a>
     <a href="#/masters" data-route="/masters">マスタ管理</a>
   </nav>
-  <div class="topbar-right">
-    <label class="store-switcher-label">店舗:</label>
-    <select id="store-switcher"></select>
-  </div>
 </header>
 
 <main id="app" class="app-main">
@@ -753,12 +765,12 @@ const Crud = {
   },
 
   getStockSummary(state, storeId, query) {
-    const lots = state.stockLots.filter((l) => l.storeId === storeId);
+    // storeId が null/undefined の場合は全店舗を横断して集計する
+    const allStores = storeId === null || storeId === undefined;
+    const lots = allStores ? state.stockLots.slice() : state.stockLots.filter((l) => l.storeId === storeId);
     const byIsbn = {};
     lots.forEach((l) => { (byIsbn[l.isbn] = byIsbn[l.isbn] || []).push(l); });
 
-    const store = state.stores.find((s) => s.id === storeId);
-    const storeName = store ? store.name : "";
     // 複数ワード検索(スペース区切り・すべての語を含む場合のみヒット)に対応
     const terms = (query || "").trim().split(/[\s\u3000]+/).filter(Boolean).map((t) => t.toLowerCase());
 
@@ -770,12 +782,23 @@ const Crud = {
       const totalQty = lotList.reduce((s, l) => s + l.quantity, 0);
       const floorQty = lotList.filter((l) => (l.location || "floor") === "floor").reduce((s, l) => s + l.quantity, 0);
       const warehouseQty = lotList.filter((l) => l.location === "warehouse").reduce((s, l) => s + l.quantity, 0);
-      const tagIds = state.bookTags.filter((bt) => bt.storeId === storeId && bt.isbn === isbn).map((bt) => bt.tagId);
-      const tags = state.tags.filter((t) => tagIds.includes(t.id)).map((t) => t.name);
+
+      const storeIdsForBook = [...new Set(lotList.map((l) => l.storeId))];
+      const tagsByStore = storeIdsForBook.map((sid) => {
+        const tagIds = state.bookTags.filter((bt) => bt.storeId === sid && bt.isbn === isbn).map((bt) => bt.tagId);
+        const names = state.tags.filter((t) => tagIds.includes(t.id)).map((t) => t.name);
+        const st = state.stores.find((x) => x.id === sid);
+        return { storeId: sid, storeName: st ? st.name : null, tags: names };
+      });
+      const tags = [...new Set(tagsByStore.flatMap((x) => x.tags))];
+      const storeNames = tagsByStore.map((x) => x.storeName).filter(Boolean);
+
       const lotOuts = lotList.map((l) => {
         const w = l.wholesalerId ? state.wholesalers.find((x) => x.id === l.wholesalerId) : null;
+        const st = state.stores.find((x) => x.id === l.storeId);
         return {
-          id: l.id, isbn: l.isbn, wholesalerId: l.wholesalerId, wholesalerName: w ? w.name : null,
+          id: l.id, isbn: l.isbn, storeId: l.storeId, storeName: st ? st.name : null,
+          wholesalerId: l.wholesalerId, wholesalerName: w ? w.name : null,
           purchaseType: l.purchaseType, quantity: l.quantity, initialQuantity: l.initialQuantity,
           unitCost: l.unitCost, receivedDate: l.receivedDate, consignmentDeadline: l.consignmentDeadline,
           location: l.location || "floor",
@@ -787,14 +810,15 @@ const Crud = {
         const wholesalerNames = [...new Set(lotOuts.map((l) => l.wholesalerName).filter(Boolean))];
         const hay = [
           book.isbn, book.title, book.author, book.publisher,
-          storeName, ...tags, ...wholesalerNames,
+          ...storeNames, ...tags, ...wholesalerNames,
         ].join(" ").toLowerCase();
         const matchesAll = terms.every((t) => hay.includes(t));
         if (!matchesAll) continue;
       }
       results.push({
         isbn, title: book.title, author: book.author, publisher: book.publisher, price: book.price,
-        totalQuantity: totalQty, floorQuantity: floorQty, warehouseQuantity: warehouseQty, tags, lots: lotOuts,
+        totalQuantity: totalQty, floorQuantity: floorQty, warehouseQuantity: warehouseQty,
+        storeNames, tags, tagsByStore, lots: lotOuts,
       });
     }
     results.sort((a, b) => b.totalQuantity - a.totalQuantity || (a.title || a.isbn).localeCompare(b.title || b.isbn, "ja"));
@@ -970,6 +994,61 @@ const Crud = {
       zeroStock, consignmentAlerts, bestSellers,
       totalTitlesInStock: Object.values(byIsbnQty).filter((q) => q > 0).length,
       totalQuantityInStock: Object.values(byIsbnQty).filter((q) => q > 0).reduce((s, q) => s + q, 0),
+    };
+  },
+
+  getDashboardAll(state, alertDays = 14, bestSellerDays = 30, bestSellerLimit = 20) {
+    // 店舗別の内訳(在庫あり点数・合計冊数・返品アラート件数)
+    const byStore = state.stores.map((s) => {
+      const d = this.getDashboard(state, s.id, alertDays, bestSellerDays, bestSellerLimit);
+      return {
+        storeId: s.id, storeName: s.name,
+        totalTitlesInStock: d.totalTitlesInStock, totalQuantityInStock: d.totalQuantityInStock,
+        consignmentAlertCount: d.consignmentAlerts.length,
+      };
+    });
+
+    // 在庫関連は全ロットから直接再集計する(店舗別内訳の単純合算だと同一書籍の重複計上がずれるため)
+    const byIsbnQtyAll = {};
+    state.stockLots.forEach((l) => { byIsbnQtyAll[l.isbn] = (byIsbnQtyAll[l.isbn] || 0) + l.quantity; });
+    const zeroStock = Object.keys(byIsbnQtyAll)
+      .filter((isbn) => byIsbnQtyAll[isbn] <= 0)
+      .map((isbn) => ({ isbn, title: (state.books[isbn] || {}).title || "" }));
+
+    const today = todayStr();
+    const consignmentAlerts = state.stockLots
+      .filter((l) => l.purchaseType === "consignment" && l.quantity > 0 && l.status === "active" && l.consignmentDeadline
+        && daysBetween(today, l.consignmentDeadline) <= alertDays)
+      .sort((a, b) => String(a.consignmentDeadline).localeCompare(String(b.consignmentDeadline)))
+      .map((lot) => {
+        const book = state.books[lot.isbn];
+        const w = lot.wholesalerId ? state.wholesalers.find((x) => x.id === lot.wholesalerId) : null;
+        const st = state.stores.find((x) => x.id === lot.storeId);
+        return {
+          lotId: lot.id, isbn: lot.isbn, title: book ? book.title : "", wholesalerName: w ? w.name : null,
+          storeName: st ? st.name : null,
+          quantity: lot.quantity, consignmentDeadline: lot.consignmentDeadline,
+          daysUntilDeadline: daysBetween(today, lot.consignmentDeadline),
+        };
+      });
+
+    const sinceDate = new Date();
+    sinceDate.setDate(sinceDate.getDate() - bestSellerDays);
+    const sinceStr = todayStrFromDate(sinceDate);
+    const salesTotals = {};
+    state.sales.filter((s) => s.saleDate >= sinceStr).forEach((s) => {
+      salesTotals[s.isbn] = (salesTotals[s.isbn] || 0) + s.quantity;
+    });
+    const bestSellers = Object.keys(salesTotals)
+      .map((isbn) => ({ isbn, title: (state.books[isbn] || {}).title || "", totalSold: salesTotals[isbn] }))
+      .sort((a, b) => b.totalSold - a.totalSold)
+      .slice(0, bestSellerLimit);
+
+    return {
+      zeroStock, consignmentAlerts, bestSellers,
+      totalTitlesInStock: Object.values(byIsbnQtyAll).filter((q) => q > 0).length,
+      totalQuantityInStock: Object.values(byIsbnQtyAll).filter((q) => q > 0).reduce((s, q) => s + q, 0),
+      byStore,
     };
   },
 
@@ -1227,7 +1306,8 @@ function mapBook(b) {
 }
 function mapLot(l) {
   return {
-    id: l.id, isbn: l.isbn, wholesaler_id: l.wholesalerId, wholesaler_name: l.wholesalerName,
+    id: l.id, isbn: l.isbn, store_id: l.storeId, store_name: l.storeName,
+    wholesaler_id: l.wholesalerId, wholesaler_name: l.wholesalerName,
     purchase_type: l.purchaseType, quantity: l.quantity, initial_quantity: l.initialQuantity,
     unit_cost: l.unitCost, received_date: l.receivedDate, consignment_deadline: l.consignmentDeadline,
     location: l.location || "floor",
@@ -1239,7 +1319,10 @@ function mapStockItem(item) {
     isbn: item.isbn, title: item.title, author: item.author, publisher: item.publisher, price: item.price,
     total_quantity: item.totalQuantity,
     floor_quantity: item.floorQuantity, warehouse_quantity: item.warehouseQuantity,
-    tags: item.tags, lots: item.lots.map(mapLot),
+    store_names: item.storeNames || [],
+    tags: item.tags,
+    tags_by_store: (item.tagsByStore || []).map((x) => ({ store_id: x.storeId, store_name: x.storeName, tags: x.tags })),
+    lots: item.lots.map(mapLot),
   };
 }
 function mapReturnCandidate(c) {
@@ -1268,6 +1351,23 @@ function mapDashboard(d) {
     best_sellers: d.bestSellers.map((b) => ({ isbn: b.isbn, title: b.title, total_sold: b.totalSold })),
     total_titles_in_stock: d.totalTitlesInStock,
     total_quantity_in_stock: d.totalQuantityInStock,
+  };
+}
+function mapDashboardAll(d) {
+  return {
+    zero_stock: d.zeroStock,
+    consignment_alerts: d.consignmentAlerts.map((a) => ({
+      lot_id: a.lotId, isbn: a.isbn, title: a.title, wholesaler_name: a.wholesalerName, store_name: a.storeName,
+      quantity: a.quantity, consignment_deadline: a.consignmentDeadline, days_until_deadline: a.daysUntilDeadline,
+    })),
+    best_sellers: d.bestSellers.map((b) => ({ isbn: b.isbn, title: b.title, total_sold: b.totalSold })),
+    total_titles_in_stock: d.totalTitlesInStock,
+    total_quantity_in_stock: d.totalQuantityInStock,
+    by_store: d.byStore.map((s) => ({
+      store_id: s.storeId, store_name: s.storeName,
+      total_titles_in_stock: s.totalTitlesInStock, total_quantity_in_stock: s.totalQuantityInStock,
+      consignment_alert_count: s.consignmentAlertCount,
+    })),
   };
 }
 function mapCsvResult(r) {
@@ -1476,7 +1576,13 @@ const LocalApi = {
       const lot = await Crud.receiveStock(state, storeId, req);
       await persistState();
       const w = lot.wholesalerId ? state.wholesalers.find((x) => x.id === lot.wholesalerId) : null;
-      return mapLot({ ...lot, wholesalerName: w ? w.name : null });
+      const st = state.stores.find((x) => x.id === lot.storeId);
+      return mapLot({ ...lot, wholesalerName: w ? w.name : null, storeName: st ? st.name : null });
+    }
+
+    // ---- 在庫(全店舗横断) ----
+    if (method === "GET" && rawPath === "/api/stock") {
+      return Crud.getStockSummary(state, null, qs.get("q") || null).map(mapStockItem);
     }
 
     // ---- 売上 ----
@@ -1493,6 +1599,23 @@ const LocalApi = {
           id: r.id, isbn: r.isbn, title: (state.books[r.isbn] || {}).title || "", quantity: r.quantity,
           sale_date: r.saleDate, unit_price: r.unitPrice, oversold: r.oversold,
         }));
+    }
+    if (method === "GET" && rawPath === "/api/sales") {
+      const days = Number(qs.get("days") || "30");
+      const since = new Date(); since.setDate(since.getDate() - days);
+      const sinceStr = todayStrFromDate(since);
+      return state.sales
+        .filter((s) => s.saleDate >= sinceStr)
+        .slice()
+        .sort((a, b) => b.saleDate.localeCompare(a.saleDate))
+        .map((r) => {
+          const st = state.stores.find((x) => x.id === r.storeId);
+          return {
+            id: r.id, isbn: r.isbn, title: (state.books[r.isbn] || {}).title || "", quantity: r.quantity,
+            sale_date: r.saleDate, unit_price: r.unitPrice, oversold: r.oversold,
+            store_id: r.storeId, store_name: st ? st.name : null,
+          };
+        });
     }
 
     // ---- 返品 ----
@@ -1584,6 +1707,9 @@ const LocalApi = {
     if (method === "GET" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/dashboard$/))) {
       const storeId = Number(m[1]);
       return mapDashboard(Crud.getDashboard(state, storeId));
+    }
+    if (method === "GET" && rawPath === "/api/dashboard") {
+      return mapDashboardAll(Crud.getDashboardAll(state));
     }
 
     throw new Error(`未対応のAPIです: ${method} ${rawPath}`);
@@ -1685,7 +1811,10 @@ const Util = {
 
 
 // ---- 09_store.js ----
-// 店舗切替の状態管理
+// 店舗の状態管理
+// (画面上部の店舗切替プルダウンは廃止し、全店舗のデータを横断して表示する方針に変更。
+//  ただし入荷登録・棚卸・返品管理など「対象店舗」を選ぶ必要がある画面のために、
+//  最後に使った店舗をデフォルト値として覚えておく目的でcurrentStoreIdは残す)
 const StoreState = {
   stores: [],
   currentStoreId: null,
@@ -1703,21 +1832,12 @@ const StoreState = {
     } else {
       this.currentStoreId = this.stores[0].id;
     }
-    this.renderSwitcher();
   },
 
-  renderSwitcher() {
-    const sel = document.getElementById("store-switcher");
-    sel.innerHTML = this.stores
-      .map((s) => `<option value="${s.id}">${Util.escapeHtml(s.name)}</option>`)
-      .join("");
-    sel.value = this.currentStoreId;
-    sel.onchange = () => {
-      this.currentStoreId = parseInt(sel.value, 10);
-      localStorage.setItem("currentStoreId", this.currentStoreId);
-      Util.toast(`店舗を「${this.getCurrentStore().name}」に切り替えました`);
-      Router.reload();
-    };
+  // 各画面の店舗選択プルダウンで、ユーザーが選んだ店舗を「次回以降のデフォルト」として覚えておく
+  setCurrentStore(storeId) {
+    this.currentStoreId = storeId;
+    localStorage.setItem("currentStoreId", storeId);
   },
 
   getCurrentStore() {
@@ -1731,7 +1851,6 @@ const StoreState = {
       this.currentStoreId = this.stores[0].id;
       localStorage.setItem("currentStoreId", this.currentStoreId);
     }
-    this.renderSwitcher();
   },
 };
 
@@ -1740,10 +1859,9 @@ const StoreState = {
 const PageDashboard = {
   async render(root) {
     root.innerHTML = `<p class="loading">読み込み中...</p>`;
-    const storeId = StoreState.currentStoreId;
     let data;
     try {
-      data = await Api.get(`/api/stores/${storeId}/dashboard`);
+      data = await Api.get(`/api/dashboard`);
     } catch (e) {
       root.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
       return;
@@ -1762,6 +1880,7 @@ const PageDashboard = {
       ? data.consignment_alerts.map((a) => `
         <tr>
           <td>${Util.escapeHtml(a.title)}</td>
+          <td>${Util.escapeHtml(a.store_name || "-")}</td>
           <td>${Util.escapeHtml(a.wholesaler_name || "-")}</td>
           <td>${a.quantity}</td>
           <td>${Util.fmtDate(a.consignment_deadline)}</td>
@@ -1769,7 +1888,17 @@ const PageDashboard = {
             ? `<span class="badge badge-danger">期限超過 ${Math.abs(a.days_until_deadline)}日</span>`
             : `<span class="badge badge-warning">あと${a.days_until_deadline}日</span>`}</td>
         </tr>`).join("")
-      : `<tr><td colspan="5" class="empty-msg">期限が近い委託在庫はありません</td></tr>`;
+      : `<tr><td colspan="6" class="empty-msg">期限が近い委託在庫はありません</td></tr>`;
+
+    const byStoreRows = data.by_store.length
+      ? data.by_store.map((s) => `
+        <tr>
+          <td>${Util.escapeHtml(s.store_name)}</td>
+          <td>${s.total_titles_in_stock}</td>
+          <td>${s.total_quantity_in_stock}</td>
+          <td>${s.consignment_alert_count}</td>
+        </tr>`).join("")
+      : `<tr><td colspan="4" class="empty-msg">店舗が登録されていません</td></tr>`;
 
     const zeroStockRows = data.zero_stock.length
       ? data.zero_stock.slice(0, 30).map((z) => `<tr><td>${Util.escapeHtml(z.title || z.isbn)}</td><td>${Util.escapeHtml(z.isbn)}</td></tr>`).join("")
@@ -1781,16 +1910,16 @@ const PageDashboard = {
 
     root.innerHTML = `
       <h1>ダッシュボード</h1>
-      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} の状況サマリーと、データのバックアップ・移行をまとめて確認できます。</p>
+      <p class="subtitle">全店舗合算の状況サマリーと、データのバックアップ・移行をまとめて確認できます。</p>
 
       <div class="grid-3">
         <div class="card stat-box">
           <div class="stat-number">${data.total_titles_in_stock}</div>
-          <div class="stat-label">在庫あり点数</div>
+          <div class="stat-label">在庫あり点数(全店舗合算)</div>
         </div>
         <div class="card stat-box">
           <div class="stat-number">${data.total_quantity_in_stock}</div>
-          <div class="stat-label">在庫合計冊数</div>
+          <div class="stat-label">在庫合計冊数(全店舗合算)</div>
         </div>
         <div class="card stat-box">
           <div class="stat-number">${data.consignment_alerts.length}</div>
@@ -1799,9 +1928,17 @@ const PageDashboard = {
       </div>
 
       <div class="card">
+        <h2 style="margin-top:0">店舗別内訳</h2>
+        <table>
+          <thead><tr><th>店舗</th><th>在庫あり点数</th><th>在庫合計冊数</th><th>返品期限アラート件数</th></tr></thead>
+          <tbody>${byStoreRows}</tbody>
+        </table>
+      </div>
+
+      <div class="card">
         <h2 style="margin-top:0">委託返品期限アラート(14日以内 / 超過含む)</h2>
         <table>
-          <thead><tr><th>書名</th><th>卸会社</th><th>数量</th><th>返品期限</th><th>状態</th></tr></thead>
+          <thead><tr><th>書名</th><th>店舗</th><th>卸会社</th><th>数量</th><th>返品期限</th><th>状態</th></tr></thead>
           <tbody>${consignmentRows}</tbody>
         </table>
       </div>
@@ -1991,13 +2128,12 @@ const Charts = {
 const PageAnalytics = {
   async render(root) {
     root.innerHTML = `<p class="loading">読み込み中...</p>`;
-    const storeId = StoreState.currentStoreId;
     let items, sales, dashboard;
     try {
       [items, sales, dashboard] = await Promise.all([
-        Api.get(`/api/stores/${storeId}/stock?q=`),
-        Api.get(`/api/stores/${storeId}/sales?days=30`),
-        Api.get(`/api/stores/${storeId}/dashboard`),
+        Api.get(`/api/stock?q=`),
+        Api.get(`/api/sales?days=30`),
+        Api.get(`/api/dashboard`),
       ]);
     } catch (e) {
       root.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
@@ -2062,6 +2198,11 @@ const PageAnalytics = {
       .sort((a, b) => b[1] - a[1]).slice(0, 10)
       .map(([label, value]) => ({ label, value }));
 
+    // 店舗別 在庫合計冊数
+    const byStoreData = (dashboard.by_store || [])
+      .slice().sort((a, b) => b.total_quantity_in_stock - a.total_quantity_in_stock)
+      .map((s) => ({ label: s.store_name, value: s.total_quantity_in_stock }));
+
     // 価格帯分布(タイトル数)
     const priceBuckets = [
       { label: "〜500円", min: 0, max: 500 },
@@ -2078,16 +2219,16 @@ const PageAnalytics = {
 
     root.innerHTML = `
       <h1>グラフ</h1>
-      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} の在庫・売上データをグラフで確認できます。</p>
+      <p class="subtitle">全店舗合算の在庫・売上データをグラフで確認できます。</p>
 
       <div class="card">
-        <h2 style="margin-top:0;">売上推移(直近30日・冊数)</h2>
+        <h2 style="margin-top:0;">売上推移(直近30日・冊数・全店舗合算)</h2>
         ${Charts.lineSvg(salesTrend)}
       </div>
 
       <div class="grid-2">
         <div class="card">
-          <h2 style="margin-top:0;">売れ筋ランキング(直近30日・上位10)</h2>
+          <h2 style="margin-top:0;">売れ筋ランキング(直近30日・上位10・全店舗合算)</h2>
           ${Charts.barChartHtml(bestSellerData, { color: "var(--accent)", unit: "冊" })}
         </div>
         <div class="card">
@@ -2117,6 +2258,11 @@ const PageAnalytics = {
           ${Charts.barChartHtml(priceData, { color: "var(--success)", unit: "点" })}
         </div>
       </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;">店舗別 在庫合計冊数</h2>
+        ${Charts.barChartHtml(byStoreData, { color: "var(--primary-dark)", unit: "冊" })}
+      </div>
     `;
   },
 };
@@ -2128,12 +2274,11 @@ const PageStock = {
 
   async render(root, params) {
     root.innerHTML = `<p class="loading">読み込み中...</p>`;
-    const storeId = StoreState.currentStoreId;
     const q = (params && params.q) || "";
 
     let items;
     try {
-      items = await Api.get(`/api/stores/${storeId}/stock?q=${encodeURIComponent(q)}`);
+      items = await Api.get(`/api/stock?q=${encodeURIComponent(q)}`);
     } catch (e) {
       root.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
       return;
@@ -2141,7 +2286,7 @@ const PageStock = {
 
     root.innerHTML = `
       <h1>在庫一覧</h1>
-      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} の在庫。行をクリックすると卸会社別の内訳とタグを確認・編集できます。</p>
+      <p class="subtitle">全店舗の在庫を横断して表示します。書名・著者・出版社・ISBN・タグ・店舗・卸会社で絞り込めます。</p>
 
       <div class="card">
         <div class="form-inline">
@@ -2170,8 +2315,9 @@ const PageStock = {
       return;
     }
 
-    const storeName = StoreState.getCurrentStore().name;
-
+    // 行のHTML(コンパクトな1行分)だけを先に組み立てる。
+    // 詳細パネルの中身(店舗別タグ・ロット内訳)は展開時に初めて生成する(遅延描画)。
+    // 件数が多いとき(数千件規模)に初期表示が重くならないようにするための対策。
     listEl.innerHTML = `
       <p class="stock-count">${items.length}件</p>
       <div class="stock-table-wrap">
@@ -2191,7 +2337,7 @@ const PageStock = {
             </tr>
           </thead>
           <tbody>
-            ${items.map((item) => this.renderRow(item, storeName)).join("")}
+            ${items.map((item) => this.renderRow(item)).join("")}
           </tbody>
         </table>
       </div>
@@ -2204,6 +2350,7 @@ const PageStock = {
       const detailRow = document.getElementById(`detail-${id}`);
       const toggle = () => {
         const isOpen = detailRow.style.display !== "none";
+        if (!isOpen) this.ensureDetailRendered(item, root, params, detailRow);
         detailRow.style.display = isOpen ? "none" : "table-row";
         toggleBtn.textContent = isOpen ? "詳細" : "閉じる";
         this.expandedIds[item.isbn] = !isOpen;
@@ -2211,16 +2358,27 @@ const PageStock = {
       if (this.expandedIds[item.isbn]) toggle();
       toggleBtn.onclick = (e) => { e.stopPropagation(); toggle(); };
       mainRow.onclick = () => toggle();
+    });
+  },
 
-      const addBtn = document.getElementById(`tagadd-${id}`);
+  ensureDetailRendered(item, root, params, detailRow) {
+    const td = detailRow.querySelector("td");
+    if (td.dataset.rendered === "1") return;
+    td.dataset.rendered = "1";
+    td.innerHTML = this.buildDetailHtml(item);
+
+    const id = cssId(item.isbn);
+    (item.tags_by_store || []).forEach((sec) => {
+      const secId = `${id}-${sec.store_id}`;
+      const addBtn = document.getElementById(`tagadd-${secId}`);
       if (addBtn) {
         addBtn.onclick = async (e) => {
           e.stopPropagation();
-          const input = document.getElementById(`taginput-${id}`);
+          const input = document.getElementById(`taginput-${secId}`);
           const name = input.value.trim();
           if (!name) return;
           try {
-            await Api.post(`/api/stores/${storeId}/books/${encodeURIComponent(item.isbn)}/tags`, { tag_name: name });
+            await Api.post(`/api/stores/${sec.store_id}/books/${encodeURIComponent(item.isbn)}/tags`, { tag_name: name });
             Util.toast("タグを追加しました", "success");
             this.expandedIds[item.isbn] = true;
             this.render(root, params);
@@ -2229,22 +2387,22 @@ const PageStock = {
           }
         };
       }
-      const taginputEl = document.getElementById(`taginput-${id}`);
+      const taginputEl = document.getElementById(`taginput-${secId}`);
       if (taginputEl) {
         taginputEl.onclick = (e) => e.stopPropagation();
         taginputEl.addEventListener("keydown", (e) => {
           if (e.key === "Enter") addBtn.click();
         });
       }
-      item.tags.forEach((tagName) => {
-        const delBtn = document.getElementById(`tagdel-${id}-${cssId(tagName)}`);
+      sec.tags.forEach((tagName) => {
+        const delBtn = document.getElementById(`tagdel-${secId}-${cssId(tagName)}`);
         if (delBtn) {
           delBtn.onclick = async (e) => {
             e.stopPropagation();
             const allTags = await Api.get("/api/tags");
             const tag = allTags.find((t) => t.name === tagName);
             if (!tag) return;
-            await Api.del(`/api/stores/${storeId}/books/${encodeURIComponent(item.isbn)}/tags/${tag.id}`);
+            await Api.del(`/api/stores/${sec.store_id}/books/${encodeURIComponent(item.isbn)}/tags/${tag.id}`);
             Util.toast("タグを削除しました", "success");
             this.expandedIds[item.isbn] = true;
             this.render(root, params);
@@ -2254,28 +2412,13 @@ const PageStock = {
     });
   },
 
-  renderRow(item, storeName) {
+  renderRow(item) {
     const id = cssId(item.isbn);
     const tagsText = item.tags.length ? item.tags.join(", ") : "-";
     const wholesalerNames = [...new Set(item.lots.map((l) => l.wholesaler_name).filter(Boolean))];
     const wholesalerText = wholesalerNames.length ? wholesalerNames.join("、") : "-";
     const priceText = item.price ? Util.fmtYen(item.price) : "-";
-
-    const lotRows = item.lots.map((lot) => `
-      <tr>
-        <td><span class="${Util.purchaseTypeBadgeClass(lot.purchase_type)}">${Util.purchaseTypeLabel(lot.purchase_type)}</span></td>
-        <td><span class="${Util.locationBadgeClass(lot.location)}">${Util.locationLabel(lot.location)}</span></td>
-        <td>${Util.escapeHtml(lot.wholesaler_name || "-")}</td>
-        <td>${lot.quantity}</td>
-        <td>${Util.fmtDate(lot.received_date)}</td>
-        <td>${lot.consignment_deadline ? Util.fmtDate(lot.consignment_deadline) : "-"}</td>
-        <td>${Util.escapeHtml(lot.note || "")}</td>
-      </tr>
-    `).join("");
-
-    const tagPills = item.tags.map((t) => `
-      <span class="tag-pill">${Util.escapeHtml(t)}<button id="tagdel-${id}-${cssId(t)}" title="削除">×</button></span>
-    `).join("");
+    const storeText = (item.store_names && item.store_names.length) ? item.store_names.join("、") : "-";
 
     return `
       <tr class="stock-row" id="row-${id}">
@@ -2284,32 +2427,70 @@ const PageStock = {
         <td class="stock-ellipsis">${Util.escapeHtml(item.publisher || "")}</td>
         <td class="stock-ellipsis" title="${Util.escapeHtml(wholesalerText)}">${Util.escapeHtml(wholesalerText)}</td>
         <td class="num">${priceText}</td>
-        <td class="stock-ellipsis">${Util.escapeHtml(storeName)}</td>
+        <td class="stock-ellipsis" title="${Util.escapeHtml(storeText)}">${Util.escapeHtml(storeText)}</td>
         <td class="num">${item.floor_quantity}</td>
         <td class="num">${item.warehouse_quantity}</td>
         <td class="stock-ellipsis" title="${Util.escapeHtml(tagsText)}">${Util.escapeHtml(tagsText)}</td>
         <td><button class="small secondary" id="toggle-${id}">詳細</button></td>
       </tr>
       <tr class="stock-detail-row" id="detail-${id}" style="display:none;">
-        <td colspan="10">
-          <div class="stock-detail-inner">
-            <div style="color:var(--text-muted); font-size:0.85em; margin-bottom:8px;">
-              ISBN: ${Util.escapeHtml(item.isbn)}
-            </div>
+        <td colspan="10"></td>
+      </tr>
+    `;
+  },
+
+  buildDetailHtml(item) {
+    const id = cssId(item.isbn);
+    const lotsByStore = {};
+    item.lots.forEach((l) => {
+      const key = l.store_id;
+      (lotsByStore[key] = lotsByStore[key] || []).push(l);
+    });
+
+    const sections = (item.tags_by_store && item.tags_by_store.length ? item.tags_by_store : [{ store_id: null, store_name: null, tags: [] }])
+      .map((sec) => {
+        const secId = `${id}-${sec.store_id}`;
+        const lotRows = (lotsByStore[sec.store_id] || []).map((lot) => `
+          <tr>
+            <td><span class="${Util.purchaseTypeBadgeClass(lot.purchase_type)}">${Util.purchaseTypeLabel(lot.purchase_type)}</span></td>
+            <td><span class="${Util.locationBadgeClass(lot.location)}">${Util.locationLabel(lot.location)}</span></td>
+            <td>${Util.escapeHtml(lot.wholesaler_name || "-")}</td>
+            <td>${lot.quantity}</td>
+            <td>${Util.fmtDate(lot.received_date)}</td>
+            <td>${lot.consignment_deadline ? Util.fmtDate(lot.consignment_deadline) : "-"}</td>
+            <td>${Util.escapeHtml(lot.note || "")}</td>
+          </tr>
+        `).join("");
+
+        const tagPills = sec.tags.map((t) => `
+          <span class="tag-pill">${Util.escapeHtml(t)}<button id="tagdel-${secId}-${cssId(t)}" title="削除">×</button></span>
+        `).join("");
+
+        return `
+          <div class="stock-detail-store-section">
+            <h4>${Util.escapeHtml(sec.store_name || "(店舗不明)")}</h4>
             <div style="margin:6px 0;">
               ${tagPills || '<span class="empty-msg" style="font-style:normal;">タグ未設定</span>'}
             </div>
             <div class="form-inline" style="margin-bottom:10px;">
-              <input type="text" id="taginput-${id}" placeholder="新しいタグ(例: 文庫棚A-3)" style="max-width:220px;">
-              <button class="small" id="tagadd-${id}">タグ追加</button>
+              <input type="text" id="taginput-${secId}" placeholder="新しいタグ(例: 文庫棚A-3)" style="max-width:220px;">
+              <button class="small" id="tagadd-${secId}">タグ追加</button>
             </div>
             <table>
               <thead><tr><th>仕入形態</th><th>保管場所</th><th>卸会社</th><th>数量</th><th>入荷日</th><th>返品期限</th><th>備考</th></tr></thead>
               <tbody>${lotRows || '<tr><td colspan="7" class="empty-msg">在庫ロットがありません</td></tr>'}</tbody>
             </table>
           </div>
-        </td>
-      </tr>
+        `;
+      }).join("");
+
+    return `
+      <div class="stock-detail-inner">
+        <div style="color:var(--text-muted); font-size:0.85em; margin-bottom:8px;">
+          ISBN: ${Util.escapeHtml(item.isbn)}
+        </div>
+        ${sections}
+      </div>
     `;
   },
 };
@@ -2322,6 +2503,7 @@ function cssId(s) {
 // ---- 12_page_receive.js ----
 const PageReceive = {
   currentBook: null, // { isbn, title, author, publisher, price, c_code, classification_text }
+  selectedStoreId: null,
   batchSettings: {
     wholesalerId: null,
     purchaseType: "buy",
@@ -2333,21 +2515,32 @@ const PageReceive = {
 
   async render(root) {
     this.currentBook = null;
-    const storeId = StoreState.currentStoreId;
+    if (this.selectedStoreId === null || !StoreState.stores.some((s) => s.id === this.selectedStoreId)) {
+      this.selectedStoreId = StoreState.currentStoreId;
+    }
+    const storeId = this.selectedStoreId;
     if (!this.batchSettings.receivedDate) this.batchSettings.receivedDate = Util.todayStr();
     let wholesalers = [];
     try {
       wholesalers = await Api.get("/api/wholesalers");
     } catch (e) { /* ignore */ }
 
+    const storeOptions = StoreState.stores
+      .map((s) => `<option value="${s.id}" ${s.id === storeId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`)
+      .join("");
+
     root.innerHTML = `
       <h1>入荷登録</h1>
-      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} への入荷を、卸会社・買切/委託を分けて登録します。</p>
+      <p class="subtitle">卸会社・買切/委託を分けて、選択した店舗への入荷を登録します。</p>
 
       <div class="card" id="batch-settings-card">
         <h2 style="margin-top:0;">入荷条件(まとめて設定)</h2>
         <p class="barcode-hint">ここで設定した内容は、変更するまでこのあとスキャンする本すべてに引き継がれます。同じ卸から届いた荷物をまとめて登録するときは、最初に1回設定するだけで大丈夫です。</p>
         <div class="grid-2">
+          <div class="form-row">
+            <label>入荷先店舗</label>
+            <select id="batch-store">${storeOptions}</select>
+          </div>
           <div class="form-row">
             <label>卸会社</label>
             <select id="batch-wholesaler">
@@ -2412,6 +2605,11 @@ const PageReceive = {
       </div>
     `;
 
+    document.getElementById("batch-store").addEventListener("change", (e) => {
+      this.selectedStoreId = parseInt(e.target.value, 10);
+      StoreState.setCurrentStore(this.selectedStoreId);
+      this.render(root);
+    });
     document.getElementById("batch-wholesaler").addEventListener("change", (e) => {
       this.batchSettings.wholesalerId = e.target.value || null;
     });
@@ -2785,10 +2983,9 @@ const PageImport = {
 const PageSales = {
   async render(root) {
     root.innerHTML = `<p class="loading">読み込み中...</p>`;
-    const storeId = StoreState.currentStoreId;
     let rows;
     try {
-      rows = await Api.get(`/api/stores/${storeId}/sales?days=90`);
+      rows = await Api.get(`/api/sales?days=90`);
     } catch (e) {
       root.innerHTML = `<p class="error-msg">読み込みに失敗しました: ${Util.escapeHtml(e.message)}</p>`;
       return;
@@ -2799,18 +2996,19 @@ const PageSales = {
         <tr>
           <td>${Util.fmtDate(r.sale_date)}</td>
           <td>${Util.escapeHtml(r.title || r.isbn)}</td>
+          <td>${Util.escapeHtml(r.store_name || "-")}</td>
           <td>${r.quantity}</td>
           <td>${Util.fmtYen(r.unit_price)}</td>
           <td>${r.oversold ? '<span class="badge badge-danger">在庫超過</span>' : ""}</td>
         </tr>`).join("")
-      : `<tr><td colspan="5" class="empty-msg">直近90日の売上データがありません</td></tr>`;
+      : `<tr><td colspan="6" class="empty-msg">直近90日の売上データがありません</td></tr>`;
 
     root.innerHTML = `
       <h1>売上履歴</h1>
-      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} の直近90日の販売履歴(POS取込データ)</p>
+      <p class="subtitle">全店舗の直近90日の販売履歴(POS取込データ)</p>
       <div class="card">
         <table>
-          <thead><tr><th>販売日</th><th>書名</th><th>数量</th><th>単価</th><th>備考</th></tr></thead>
+          <thead><tr><th>販売日</th><th>書名</th><th>店舗</th><th>数量</th><th>単価</th><th>備考</th></tr></thead>
           <tbody>${body}</tbody>
         </table>
       </div>
@@ -2822,32 +3020,53 @@ const PageSales = {
 // ---- 15_page_returns.js ----
 const PageReturns = {
   activeTab: "candidates",
+  selectedStoreId: null,
 
   async render(root, params) {
     if (params && params.tab) this.activeTab = params.tab;
-    const storeId = StoreState.currentStoreId;
+    if (this.selectedStoreId === null || !StoreState.stores.some((s) => s.id === this.selectedStoreId)) {
+      this.selectedStoreId = StoreState.currentStoreId;
+    }
+    const storeId = this.selectedStoreId;
+
+    const storeOptions = StoreState.stores
+      .map((s) => `<option value="${s.id}" ${s.id === storeId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`)
+      .join("");
 
     root.innerHTML = `
       <h1>返品管理</h1>
-      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} の委託在庫の返品期限・数量を管理します。</p>
+      <p class="subtitle">選択した店舗の委託在庫の返品期限・数量を管理します。</p>
+
+      <div class="card">
+        <div class="form-row" style="max-width:320px;">
+          <label>対象店舗</label>
+          <select id="returns-store-select">${storeOptions}</select>
+        </div>
+      </div>
+
       <div class="tab-buttons">
         <button id="tab-candidates" class="${this.activeTab === "candidates" ? "active" : "secondary"}">返品対象一覧</button>
         <button id="tab-history" class="${this.activeTab === "history" ? "active" : "secondary"}">返品履歴</button>
       </div>
       <div id="tab-content"><p class="loading">読み込み中...</p></div>
     `;
+    document.getElementById("returns-store-select").addEventListener("change", (e) => {
+      this.selectedStoreId = parseInt(e.target.value, 10);
+      StoreState.setCurrentStore(this.selectedStoreId);
+      this.render(root);
+    });
     document.getElementById("tab-candidates").onclick = () => { this.activeTab = "candidates"; this.render(root); };
     document.getElementById("tab-history").onclick = () => { this.activeTab = "history"; this.render(root); };
 
     const content = document.getElementById("tab-content");
     if (this.activeTab === "candidates") {
-      await this.renderCandidates(content, storeId);
+      await this.renderCandidates(content, storeId, root);
     } else {
       await this.renderHistory(content, storeId);
     }
   },
 
-  async renderCandidates(content, storeId) {
+  async renderCandidates(content, storeId, root) {
     let candidates;
     try {
       candidates = await Api.get(`/api/stores/${storeId}/returns/candidates`);
@@ -2864,11 +3083,12 @@ const PageReturns = {
     content.innerHTML = `
       <div class="card">
         <table>
-          <thead><tr><th>書名</th><th>卸会社</th><th>在庫数</th><th>返品期限</th><th>状態</th><th>返品数量</th><th></th></tr></thead>
+          <thead><tr><th>書名</th><th>保管場所</th><th>卸会社</th><th>在庫数</th><th>返品期限</th><th>状態</th><th>返品数量</th><th></th></tr></thead>
           <tbody>
             ${candidates.map((c) => `
               <tr>
                 <td>${Util.escapeHtml(c.title || c.isbn)}</td>
+                <td><span class="${Util.locationBadgeClass(c.location)}">${Util.locationLabel(c.location)}</span></td>
                 <td>${Util.escapeHtml(c.wholesaler_name || "-")}</td>
                 <td>${c.quantity}</td>
                 <td>${Util.fmtDate(c.consignment_deadline)}</td>
@@ -2894,7 +3114,7 @@ const PageReturns = {
         try {
           await Api.post(`/api/stores/${storeId}/returns`, { lot_id: c.lot_id, quantity: qty, note: "" });
           Util.toast("返品登録しました", "success");
-          Router.reload();
+          this.render(root);
         } catch (e) {
           Util.toast("返品登録に失敗しました: " + e.message, "error");
         }
@@ -2934,9 +3154,14 @@ const PageReturns = {
 
 // ---- 16_page_stocktake.js ----
 const PageStocktake = {
+  selectedStoreId: null,
+
   async render(root) {
     root.innerHTML = `<p class="loading">読み込み中...</p>`;
-    const storeId = StoreState.currentStoreId;
+    if (this.selectedStoreId === null || !StoreState.stores.some((s) => s.id === this.selectedStoreId)) {
+      this.selectedStoreId = StoreState.currentStoreId;
+    }
+    const storeId = this.selectedStoreId;
     let rows;
     try {
       rows = await Api.get(`/api/stores/${storeId}/stocktake/current`);
@@ -2945,9 +3170,20 @@ const PageStocktake = {
       return;
     }
 
+    const storeOptions = StoreState.stores
+      .map((s) => `<option value="${s.id}" ${s.id === storeId ? "selected" : ""}>${Util.escapeHtml(s.name)}</option>`)
+      .join("");
+
     root.innerHTML = `
       <h1>棚卸(実地在庫確認)</h1>
-      <p class="subtitle">${Util.escapeHtml(StoreState.getCurrentStore().name)} のシステム上在庫と実地カウント数を比較し、差異を登録します。差異は卸会社別の内訳を変えずに「調整」として反映されます。</p>
+      <p class="subtitle">選択した店舗のシステム上在庫と実地カウント数を比較し、差異を登録します。差異は卸会社別の内訳を変えずに「調整」として反映されます。</p>
+
+      <div class="card">
+        <div class="form-row" style="max-width:320px;">
+          <label>対象店舗</label>
+          <select id="stocktake-store-select">${storeOptions}</select>
+        </div>
+      </div>
 
       <div class="card">
         <table>
@@ -2972,6 +3208,12 @@ const PageStocktake = {
       </div>
     `;
 
+    document.getElementById("stocktake-store-select").addEventListener("change", (e) => {
+      this.selectedStoreId = parseInt(e.target.value, 10);
+      StoreState.setCurrentStore(this.selectedStoreId);
+      this.render(root);
+    });
+
     rows.forEach((r) => {
       const id = cssId(r.isbn);
       document.getElementById(`st-btn-${id}`).onclick = async () => {
@@ -2983,7 +3225,7 @@ const PageStocktake = {
           } else {
             Util.toast(`差異 ${result.diff > 0 ? "+" : ""}${result.diff} 冊を調整登録しました`, "warning");
           }
-          Router.reload();
+          this.render(root);
         } catch (e) {
           Util.toast("登録に失敗しました: " + e.message, "error");
         }
