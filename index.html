@@ -3214,6 +3214,7 @@ const PURCHASE_CSV_TEMPLATE =
 
 const PageReceive = {
   currentBook: null, // { isbn, title, author, publisher, price, c_code, classification_text }
+  manualEntry: false, // バーコードが無い商品を手入力で登録している最中かどうか
   selectedStoreId: null,
   batchSettings: {
     wholesalerId: null,
@@ -3288,12 +3289,15 @@ const PageReceive = {
         <label><strong>バーコードをスキャン</strong>(上段のISBNバーコード→下段の価格・分類バーコードの順にスキャンしてください)</label>
         <input type="text" id="scan-input" autofocus placeholder="ここにカーソルを置いてバーコードをスキャン、または手入力してEnter">
         <div class="barcode-hint">2段バーコードの下段(192/191から始まるコード)をスキャンすると、価格・分類コードを自動反映します。上の「入荷条件」はそのままで、続けて次の本をスキャンできます。</div>
+        <p style="margin-top:10px; margin-bottom:0;">
+          <button class="small secondary" id="manual-entry-btn">バーコードが無い書籍・商品を手入力で登録</button>
+        </p>
       </div>
 
       <div class="card" id="book-form-card" style="display:none;">
-        <h2 style="margin-top:0;">スキャンした書籍</h2>
+        <h2 style="margin-top:0;" id="book-form-title">スキャンした書籍</h2>
         <div class="grid-2">
-          <div class="form-row"><label>ISBN</label><input type="text" id="f-isbn" readonly></div>
+          <div class="form-row"><label id="f-isbn-label">ISBN</label><input type="text" id="f-isbn" readonly></div>
           <div class="form-row"><label>書名<span class="field-required-badge">必須</span></label><input type="text" id="f-title"></div>
           <div class="form-row"><label>著者<span class="field-optional-badge">任意</span></label><input type="text" id="f-author"></div>
           <div class="form-row"><label>出版社<span class="field-optional-badge">任意</span></label><input type="text" id="f-publisher"></div>
@@ -3365,6 +3369,7 @@ const PageReceive = {
 
     document.getElementById("submit-receive").onclick = () => this.submit(storeId);
     document.getElementById("clear-form").onclick = () => this.cancelCurrentBook();
+    document.getElementById("manual-entry-btn").onclick = () => this.startManualEntry();
 
     // 数量欄でEnter → 価格欄へ、価格欄でEnter → そのまま登録して次の書籍へ
     // (マウス操作なしで スキャン→数量→価格→Enter の流れだけで次々登録できるようにする)
@@ -3416,6 +3421,7 @@ const PageReceive = {
 
   cancelCurrentBook() {
     this.currentBook = null;
+    this.manualEntry = false;
     const card = document.getElementById("book-form-card");
     if (card) card.style.display = "none";
     const scanInput = document.getElementById("scan-input");
@@ -3423,6 +3429,12 @@ const PageReceive = {
       scanInput.value = "";
       scanInput.focus();
     }
+  },
+
+  startManualEntry() {
+    this.currentBook = { isbn: "", title: "", author: "", publisher: "", price: 0, c_code: "", classification_text: "" };
+    this.manualEntry = true;
+    this.fillBookForm();
   },
 
   async handleScan(code) {
@@ -3440,6 +3452,7 @@ const PageReceive = {
       }
       const book = result.book || { isbn: result.isbn, title: "", author: "", publisher: "", price: 0 };
       this.currentBook = { ...book, isbn: result.isbn };
+      this.manualEntry = false;
       if (result.found_in === "openbd") {
         Util.toast("openBDから書誌情報を自動取得しました", "success");
       } else if (result.found_in === "local") {
@@ -3470,7 +3483,19 @@ const PageReceive = {
 
   fillBookForm() {
     document.getElementById("book-form-card").style.display = "";
-    document.getElementById("f-isbn").value = this.currentBook.isbn;
+    const isbnField = document.getElementById("f-isbn");
+    const isbnLabel = document.getElementById("f-isbn-label");
+    isbnField.value = this.currentBook.isbn;
+    isbnField.readOnly = !this.manualEntry;
+    if (this.manualEntry) {
+      isbnField.placeholder = "例: グッズ-001、雑貨-バッグ など任意のコード";
+      isbnLabel.innerHTML = '商品コード(ISBNが無い場合)<span class="field-required-badge">必須</span>';
+      document.getElementById("book-form-title").textContent = "手入力で登録する商品";
+    } else {
+      isbnField.placeholder = "";
+      isbnLabel.textContent = "ISBN";
+      document.getElementById("book-form-title").textContent = "スキャンした書籍";
+    }
     document.getElementById("f-title").value = this.currentBook.title || "";
     document.getElementById("f-author").value = this.currentBook.author || "";
     document.getElementById("f-publisher").value = this.currentBook.publisher || "";
@@ -3479,15 +3504,25 @@ const PageReceive = {
     document.getElementById("f-quantity").value = 1;
     document.getElementById("f-unit-cost").value = 0;
     document.getElementById("f-note").value = "";
-    // 2段バーコード(ISBN→価格)の2回目をそのままスキャンできるよう、
-    // フォーカスはスキャン欄に置いたままにする(数量欄には移さない)
-    const scanInput = document.getElementById("scan-input");
-    if (scanInput) scanInput.focus();
+    if (this.manualEntry) {
+      // 手入力の場合は商品コード欄からそのまま入力を始められるようにする
+      isbnField.focus();
+    } else {
+      // 2段バーコード(ISBN→価格)の2回目をそのままスキャンできるよう、
+      // フォーカスはスキャン欄に置いたままにする(数量欄には移さない)
+      const scanInput = document.getElementById("scan-input");
+      if (scanInput) scanInput.focus();
+    }
   },
 
   async submit(storeId) {
     if (!this.currentBook) {
       Util.toast("先にバーコードをスキャンしてください", "warning");
+      return;
+    }
+    const isbnValue = document.getElementById("f-isbn").value.trim();
+    if (!isbnValue) {
+      Util.toast(this.manualEntry ? "商品コードを入力してください" : "ISBNが取得できていません", "error");
       return;
     }
     const purchaseType = this.batchSettings.purchaseType;
@@ -3513,7 +3548,7 @@ const PageReceive = {
     }
 
     const payload = {
-      isbn: document.getElementById("f-isbn").value,
+      isbn: isbnValue,
       title: titleValue,
       author: document.getElementById("f-author").value,
       publisher: document.getElementById("f-publisher").value,
