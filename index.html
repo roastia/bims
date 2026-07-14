@@ -446,7 +446,7 @@ button.small { padding: 4px 9px; font-size: 0.85em; }
     <a href="#/stock" data-route="/stock">在庫一覧</a>
     <a href="#/receive" data-route="/receive">入荷登録</a>
     <a href="#/import" data-route="/import">CSV取込</a>
-    <a href="#/sales" data-route="/sales">売上履歴</a>
+    <a href="#/sales" data-route="/sales">販売履歴</a>
     <a href="#/returns" data-route="/returns">返品管理</a>
     <a href="#/stocktake" data-route="/stocktake">棚卸</a>
     <a href="#/masters" data-route="/masters">マスタ管理</a>
@@ -1377,7 +1377,7 @@ const Crud = {
         unitCost: lot.unitCost, receivedDate: lot.receivedDate, consignmentDeadline: lot.consignmentDeadline,
         location: toLocation,
         status: "active", source: "transfer",
-        note: (lot.note ? lot.note + " / " : "") + (sameStore ? "エリア移動で受入" : "店舗間移動で受入"),
+        note: (lot.note ? lot.note + " / " : "") + (sameStore ? "エリア移動で入荷" : "店舗間移動で入荷"),
       };
       state.stockLots.push(newLot);
       movedLotPairs.push({ fromLotId: lot.id, toLotId: newLot.id, quantity: take });
@@ -1414,7 +1414,7 @@ const Crud = {
         const quantity = parseInt(row.quantity || row.数量 || "", 10);
         if (!quantity || quantity <= 0) throw new Error("quantity は正の整数である必要があります");
 
-        const ptypeRaw = (row.purchase_type || row.仕入形態 || "buy").trim();
+        const ptypeRaw = (row.purchase_type || row.入荷形態 || row.仕入形態 || "buy").trim();
         const purchaseType = PURCHASE_TYPE_JP[ptypeRaw];
         if (!purchaseType) throw new Error(`purchase_type の値が不正です: ${ptypeRaw}`);
 
@@ -1430,7 +1430,7 @@ const Crud = {
           wholesalerId = w.id;
         }
 
-        const unitCost = parseInt(row.unit_cost || row.仕入単価 || "0", 10) || 0;
+        const unitCost = parseInt(row.unit_cost || row.入荷単価 || row.仕入単価 || "0", 10) || 0;
         const receivedDate = parseFlexibleDate(row.received_date || row.入荷日) || todayStr();
         let consignmentDeadline = null;
         if (purchaseType === "consignment") {
@@ -1869,7 +1869,7 @@ const LocalApi = {
       return Crud.getStockSummary(state, null, qs.get("q") || null).map(mapStockItem);
     }
 
-    // ---- 売上 ----
+    // ---- 販売 ----
     if (method === "GET" && (m = rawPath.match(/^\/api\/stores\/(\d+)\/sales$/))) {
       const storeId = Number(m[1]);
       const days = Number(qs.get("days") || "30");
@@ -2091,7 +2091,7 @@ const Util = {
 
 // ============================================================
 // ページネーション共通ヘルパー
-// 各ページ(ダッシュボード・売上履歴・返品管理・棚卸など)の一覧テーブルで
+// 各ページ(ダッシュボード・販売履歴・返品管理・棚卸など)の一覧テーブルで
 // 「表示件数」セレクト(20/50/100/200/すべて)とページ送りを共通化するためのもの。
 // 選択した表示件数は localStorage に保存され、次回以降も引き継がれる。
 // ============================================================
@@ -2336,7 +2336,7 @@ const PageDashboard = {
 
     const bestSellerRows = data.best_sellers.length
       ? data.best_sellers.map((b, i) => `<tr><td>${i + 1}</td><td>${Util.escapeHtml(b.title || b.isbn)}</td><td>${b.total_sold}</td></tr>`).join("")
-      : `<tr><td colspan="3" class="empty-msg">直近30日の売上データがありません</td></tr>`;
+      : `<tr><td colspan="3" class="empty-msg">直近30日の販売データがありません</td></tr>`;
 
     root.innerHTML = `
       <h1>ダッシュボード</h1>
@@ -2401,10 +2401,10 @@ const PageDashboard = {
       </div>
 
       <h2 style="margin-top:36px;">グラフで見る全店舗データ</h2>
-      <p class="subtitle">在庫・売上に関するデータをグラフで確認できます。</p>
+      <p class="subtitle">在庫・販売に関するデータをグラフで確認できます。</p>
 
       <div class="card">
-        <h2 style="margin-top:0;">売上推移(直近30日・冊数・全店舗合算)</h2>
+        <h2 style="margin-top:0;">販売推移(直近30日・冊数・全店舗合算)</h2>
         ${Charts.lineSvg(salesTrend)}
       </div>
 
@@ -2421,7 +2421,7 @@ const PageDashboard = {
 
       <div class="grid-2">
         <div class="card">
-          <h2 style="margin-top:0;">仕入形態別 在庫点数</h2>
+          <h2 style="margin-top:0;">入荷形態別 在庫点数</h2>
           ${Charts.donutSvg(purchaseTypeData)}
         </div>
         <div class="card">
@@ -2457,7 +2457,7 @@ const PageDashboard = {
             <tr><td>卸会社</td><td>${stats.wholesalers} 件</td></tr>
             <tr><td>書誌(登録タイトル数)</td><td>${stats.books} 件</td></tr>
             <tr><td>在庫ロット</td><td>${stats.stockLots} 件</td></tr>
-            <tr><td>売上履歴</td><td>${stats.sales} 件</td></tr>
+            <tr><td>販売履歴</td><td>${stats.sales} 件</td></tr>
             <tr><td>返品履歴</td><td>${stats.returns} 件</td></tr>
           </tbody>
         </table>
@@ -2553,7 +2553,7 @@ const PageDashboard = {
 };
 
 // ============================================================
-// チャート描画ヘルパー: 在庫・売上などのデータを可視化する
+// チャート描画ヘルパー: 在庫・販売などのデータを可視化する
 // 外部ライブラリを使わず、HTML/CSSのバーとSVGの円グラフ・折れ線グラフで表現する
 // ダッシュボード画面(10_page_dashboard.js)から利用される
 // ============================================================
@@ -3026,7 +3026,7 @@ const PageStock = {
               <button class="small" id="tagadd-${secId}">タグ追加</button>
             </div>
             <table>
-              <thead><tr><th>仕入形態</th><th>保管場所</th><th>卸会社</th><th>数量</th><th>入荷日</th><th>返品期限</th><th>備考</th></tr></thead>
+              <thead><tr><th>入荷形態</th><th>保管場所</th><th>卸会社</th><th>数量</th><th>入荷日</th><th>返品期限</th><th>備考</th></tr></thead>
               <tbody>${lotRows || '<tr><td colspan="7" class="empty-msg">在庫ロットがありません</td></tr>'}</tbody>
             </table>
             ${moveFormHtml}
@@ -3097,7 +3097,7 @@ const PageReceive = {
             </select>
           </div>
           <div class="form-row">
-            <label>仕入形態</label>
+            <label>入荷形態</label>
             <select id="batch-purchase-type">
               <option value="buy" ${this.batchSettings.purchaseType === "buy" ? "selected" : ""}>買切</option>
               <option value="consignment" ${this.batchSettings.purchaseType === "consignment" ? "selected" : ""}>委託</option>
@@ -3137,7 +3137,7 @@ const PageReceive = {
           <div class="form-row"><label>本体価格(円)</label><input type="number" id="f-price"></div>
           <div class="form-row"><label>分類(Cコード)</label><input type="text" id="f-classification" readonly></div>
           <div class="form-row"><label>数量</label><input type="number" id="f-quantity" value="1" min="1"></div>
-          <div class="form-row"><label>仕入単価(任意・円)</label><input type="number" id="f-unit-cost" value="0"></div>
+          <div class="form-row"><label>入荷単価(任意・円)</label><input type="number" id="f-unit-cost" value="0"></div>
         </div>
         <div class="form-row"><label>備考(任意)</label><input type="text" id="f-note"></div>
         <button id="submit-receive">この内容で登録して次へ</button>
@@ -3147,7 +3147,7 @@ const PageReceive = {
       <div class="card">
         <h2 style="margin-top:0;">今回の入荷登録ログ</h2>
         <table>
-          <thead><tr><th>書名</th><th>卸会社</th><th>仕入形態</th><th>保管場所</th><th>数量</th><th>時刻</th></tr></thead>
+          <thead><tr><th>書名</th><th>卸会社</th><th>入荷形態</th><th>保管場所</th><th>数量</th><th>時刻</th></tr></thead>
           <tbody id="session-log-body">${this.renderLogRows()}</tbody>
         </table>
       </div>
@@ -3371,7 +3371,7 @@ const PageImport = {
 
     root.innerHTML = `
       <h1>CSV取込</h1>
-      <p class="subtitle">卸会社からの入荷データ、POSレジの売上データをCSVファイルで取り込みます。</p>
+      <p class="subtitle">卸会社からの入荷データ、POSレジの販売データをCSVファイルで取り込みます。</p>
 
       <div class="card">
         <div class="form-row" style="max-width:320px;">
@@ -3382,7 +3382,7 @@ const PageImport = {
 
       <div class="tab-buttons">
         <button id="tab-purchase" class="${this.activeTab === "purchase" ? "active" : "secondary"}">入荷データ取込</button>
-        <button id="tab-sales" class="${this.activeTab === "sales" ? "active" : "secondary"}">POS売上データ取込</button>
+        <button id="tab-sales" class="${this.activeTab === "sales" ? "active" : "secondary"}">POS販売データ取込</button>
       </div>
 
       <div id="tab-content"></div>
@@ -3433,8 +3433,8 @@ const PageImport = {
     } else {
       content.innerHTML = `
         <div class="card">
-          <h2 style="margin-top:0;">POS売上データCSV取込</h2>
-          <p class="barcode-hint">「${Util.escapeHtml(StoreState.stores.find((s) => s.id === storeId).name)}」の売上・在庫として取り込まれます。在庫は委託(返品期限が近いもの優先)→買切の順に自動で引き当てられます。書誌が未登録のISBNはスキップされます(先に入荷登録してください)。</p>
+          <h2 style="margin-top:0;">POS販売データCSV取込</h2>
+          <p class="barcode-hint">「${Util.escapeHtml(StoreState.stores.find((s) => s.id === storeId).name)}」の販売・在庫として取り込まれます。在庫は委託(返品期限が近いもの優先)→買切の順に自動で引き当てられます。書誌が未登録のISBNはスキップされます(先に入荷登録してください)。</p>
           <p>列: <code>isbn, quantity, sale_date, unit_price</code></p>
           <p><button class="small secondary" id="dl-sales-template">テンプレートCSVをダウンロード</button></p>
           <div class="csv-dropzone" id="sales-dropzone">
@@ -3548,10 +3548,10 @@ const PageSales = {
           <td>${Util.fmtYen(r.unit_price)}</td>
           <td>${r.oversold ? '<span class="badge badge-danger">在庫超過</span>' : ""}</td>
         </tr>`).join("")
-      : `<tr><td colspan="6" class="empty-msg">直近90日の売上データがありません</td></tr>`;
+      : `<tr><td colspan="6" class="empty-msg">直近90日の販売データがありません</td></tr>`;
 
     root.innerHTML = `
-      <h1>売上履歴</h1>
+      <h1>販売履歴</h1>
       <p class="subtitle">全店舗の直近90日の販売履歴(POS取込データ)</p>
       <div class="card">
         <div class="stock-list-toolbar">
@@ -3949,14 +3949,14 @@ const PageMasters = {
         if (delBtn) {
           delBtn.onclick = async () => {
             const ok = window.confirm(
-              `店舗「${s.name}」を削除します。この店舗の在庫・売上・返品・棚卸履歴もすべて削除され、元に戻せません。よろしいですか?`
+              `店舗「${s.name}」を削除します。この店舗の在庫・販売・返品・棚卸履歴もすべて削除され、元に戻せません。よろしいですか?`
             );
             if (!ok) return;
             try {
               const result = await Api.del(`/api/stores/${s.id}`);
               await StoreState.refreshStores();
               Util.toast(
-                `店舗を削除しました(在庫ロット${result.removed.stockLots}件、売上${result.removed.sales}件、返品${result.removed.returns}件を含む)`,
+                `店舗を削除しました(在庫ロット${result.removed.stockLots}件、販売${result.removed.sales}件、返品${result.removed.returns}件を含む)`,
                 "success"
               );
               this.render(document.getElementById("app"));
@@ -4202,13 +4202,13 @@ const PageMasters = {
 
   async deleteBook(isbn, title) {
     const ok = window.confirm(
-      `書誌「${title || isbn}」を削除します。全店舗の在庫・売上・返品・棚卸履歴・タグ付けもすべて削除され、元に戻せません。よろしいですか?`
+      `書誌「${title || isbn}」を削除します。全店舗の在庫・販売・返品・棚卸履歴・タグ付けもすべて削除され、元に戻せません。よろしいですか?`
     );
     if (!ok) return;
     try {
       const result = await Api.del(`/api/books/${encodeURIComponent(isbn)}`);
       Util.toast(
-        `書誌を削除しました(在庫ロット${result.removed.stockLots}件、売上${result.removed.sales}件、返品${result.removed.returns}件を含む)`,
+        `書誌を削除しました(在庫ロット${result.removed.stockLots}件、販売${result.removed.sales}件、返品${result.removed.returns}件を含む)`,
         "success"
       );
       if (this.editingBookIsbn === isbn) this.editingBookIsbn = null;
